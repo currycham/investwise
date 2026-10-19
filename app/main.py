@@ -10,7 +10,7 @@ from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
-from . import analyzer, llm, parser
+from . import analyzer, digest, llm, parser
 from .config import BASE_DIR, DAILY_RUN_TIME, INVITE_CODE, TIMEZONE
 from .db import alert_condition, get_conn, init_db
 from .prompts import SOCRATIC_SYSTEM
@@ -278,6 +278,11 @@ def alerts(days: int = 7, user: dict = Depends(current_user)):
                 ORDER BY dr.report_date DESC, ABS(ri.score) DESC""",
             (user["id"], f"-{days} day")).fetchall()
     return [_item_out(r) for r in rows]
+
+
+@app.get("/api/digest")
+def get_digest(user: dict = Depends(current_user)):
+    return digest.latest(user["id"])
 
 
 @app.post("/api/run")

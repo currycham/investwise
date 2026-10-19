@@ -69,6 +69,22 @@ main { max-width: 1080px; margin: 0 auto; padding: 0 16px 48px; }
 .topbar-actions { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
 .section-head { display: flex; justify-content: space-between; align-items: center; margin: 16px 0 8px; }
 
+/* 今日概览 */
+.digest {
+  background: var(--card); border: 1px solid var(--border); border-radius: 10px; padding: 14px 16px; margin-bottom: 12px;
+}
+.digest-head { display: flex; align-items: baseline; gap: 10px; margin-bottom: 6px; }
+.digest-overview { margin: 0 0 8px; font-size: 15px; }
+.digest-row {
+  display: grid; grid-template-columns: 7em auto 1fr; gap: 10px; align-items: baseline;
+  padding: 7px 0; border-top: 1px dashed var(--border); cursor: pointer;
+}
+.digest-row:hover .alert-company { text-decoration: underline; }
+.digest-badges { display: flex; gap: 4px; white-space: nowrap; }
+.reflections { margin-top: 10px; padding: 10px 12px; background: var(--neutral-bg); border-radius: 8px; }
+.reflections ol { margin: 6px 0 0; padding-left: 20px; }
+.reflections li { margin: 4px 0; }
+
 /* 预警区 */
 .alerts {
   background: var(--alert-bg); border: 1px solid var(--alert); border-radius: 10px; padding: 14px 16px;
@@ -161,5 +177,7 @@ dialog h3 { margin-top: 0; }
 
 @media (max-width: 600px) {
   .alert-row { grid-template-columns: auto 1fr; }
+  .digest-row { grid-template-columns: auto 1fr; }
+  .digest-row > span:last-child { grid-column: 1 / -1; }
   .company-meta { margin-left: 0; }
 }

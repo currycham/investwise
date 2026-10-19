@@ -53,10 +53,46 @@ async function boot() {
 }
 
 async function refresh() {
-  const [companies, alerts] = await Promise.all([api("/api/companies"), api("/api/alerts")]);
+  const [companies, alerts, digest] = await Promise.all([api("/api/companies"), api("/api/alerts"), api("/api/digest")]);
   state.companies = companies;
+  renderDigest(digest);
   renderAlerts(alerts);
   renderCompanies();
+}
+
+function renderDigest(d) {
+  const el = $("#digest");
+  el.classList.toggle("hidden", !d.company_total);
+  if (!d.company_total) return;
+  const head = `<div class="digest-head"><h2>今日概览</h2><span class="muted small">${d.date}${d.updated_at ? ` · ${d.updated_at} 更新` : ""}</span></div>`;
+  if (d.empty) {
+    el.innerHTML = head + `<p class="muted">今日无重要变化。${d.last_info_date ? `上次有重要信息是 ${d.last_info_date}。` : ""}</p>`;
+    return;
+  }
+  const stanceClass = (s) => (s === "偏利好" ? "bull" : s === "偏利空" ? "bear" : "neutral");
+  const thesisClass = (t) => (t === "加强" ? "bull" : t ? "bear" : "");
+  el.innerHTML = head + `
+    <p class="digest-overview">${esc(d.overview)}</p>
+    <div class="digest-rows">${d.companies.map((c) => `
+      <div class="digest-row" data-company="${c.company_id}">
+        <span class="alert-company">${esc(c.name)}</span>
+        <span class="digest-badges">
+          <span class="badge ${stanceClass(c.stance)}">${esc(c.stance)} ${fmtScore(c.score)}</span>
+          ${c.alerts ? `<span class="tag alert">预警 ${c.alerts}</span>` : ""}
+        </span>
+        <span>${esc(c.summary)}
+          ${c.thesis_effect ? `<span class="badge ${thesisClass(c.thesis_effect)}">投资逻辑：${esc(c.thesis_effect)}</span>` : ""}
+          ${c.dates.length > 1 || c.dates[0] !== d.date ? `<span class="muted small">（${c.dates.length > 1 ? `${c.dates[0]} ~ ${c.dates.at(-1)}` : c.dates[0]}，共 ${c.count} 条）</span>` : ""}
+        </span>
+      </div>`).join("")}</div>
+    ${d.reflections.length ? `<div class="reflections"><b>值得想一想</b><ol>${d.reflections.map((r) => `<li>${esc(r)}</li>`).join("")}</ol></div>` : ""}`;
+  el.querySelectorAll(".digest-row").forEach((row) => (row.onclick = () => focusCompany(Number(row.dataset.company))));
+}
+
+function focusCompany(id) {
+  state.open.add(id);
+  renderCompanies();
+  document.getElementById(`company-${id}`)?.scrollIntoView({ behavior: "smooth", block: "start" });
 }
 
 function renderAlerts(alerts) {
@@ -69,12 +105,7 @@ function renderAlerts(alerts) {
       <span class="alert-title">${esc(a.title)}</span>
       <span class="muted small">${esc(a.report_date)}</span>
     </div>`).join("");
-  document.querySelectorAll(".alert-row").forEach((el) => (el.onclick = () => {
-    const id = Number(el.dataset.company);
-    state.open.add(id);
-    renderCompanies();
-    document.getElementById(`company-${id}`)?.scrollIntoView({ behavior: "smooth", block: "start" });
-  }));
+  document.querySelectorAll(".alert-row").forEach((el) => (el.onclick = () => focusCompany(Number(el.dataset.company))));
 }
 
 function renderCompanies() {

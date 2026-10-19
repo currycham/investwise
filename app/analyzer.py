@@ -10,7 +10,7 @@ import threading
 from datetime import datetime, timedelta, timezone
 from zoneinfo import ZoneInfo
 
-from . import llm, sources
+from . import digest, llm, sources
 from .config import BACKFILL_DAYS, NEWS_LOOKBACK_HOURS, TIMEZONE
 from .db import get_conn
 from .prompts import ANALYSIS_SYSTEM
@@ -105,6 +105,14 @@ def run(user_id: int | None = None, company_ids: list[int] | None = None,
             except Exception as e:
                 log.exception("analyze failed")
                 status["errors"].append(f"{c['name']} 分析失败：{e}")
+
+        status["progress"] = "生成今日概览"
+        for uid in {c["user_id"] for c in companies}:
+            try:
+                digest.generate(uid)
+            except Exception as e:
+                log.exception("digest failed")
+                status["errors"].append(f"今日概览生成失败：{e}")
         status["progress"] = "完成"
     finally:
         status.update(running=False, finished_at=now_local().isoformat(timespec="seconds"))

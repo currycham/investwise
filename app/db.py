@@ -71,6 +71,17 @@ CREATE TABLE IF NOT EXISTS report_items (
     sources_json TEXT DEFAULT '[]',
     created_at TEXT DEFAULT CURRENT_TIMESTAMP
 );
+-- 每日概览：每个用户每天一条，当天每次检索完成后覆盖更新
+CREATE TABLE IF NOT EXISTS user_digests (
+    id INTEGER PRIMARY KEY,
+    user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    digest_date TEXT NOT NULL,
+    overview TEXT DEFAULT '',
+    companies_json TEXT DEFAULT '[]',
+    reflections_json TEXT DEFAULT '[]',
+    updated_at TEXT DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE (user_id, digest_date)
+);
 CREATE TABLE IF NOT EXISTS chat_messages (
     id INTEGER PRIMARY KEY,
     company_id INTEGER NOT NULL REFERENCES companies(id) ON DELETE CASCADE,
