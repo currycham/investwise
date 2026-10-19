@@ -5,7 +5,8 @@ import re
 
 import httpx
 
-from .config import DEEPSEEK_API_KEY, DEEPSEEK_BASE_URL, DEEPSEEK_MODEL
+from .config import (DEEPSEEK_API_KEY, DEEPSEEK_BASE_URL, DEEPSEEK_MODEL, DEEPSEEK_PRICE_CACHED,
+                     DEEPSEEK_PRICE_INPUT, DEEPSEEK_PRICE_OUTPUT)
 
 log = logging.getLogger(__name__)
 
@@ -15,7 +16,8 @@ class LLMError(RuntimeError):
 
 
 def chat(messages: list[dict], *, json_mode: bool = False, temperature: float = 0.3,
-         max_tokens: int = 4000, timeout: float = 120) -> str:
+         max_tokens: int = 4000, timeout: float = 120, task: str = "other", user_id: int | None = None) -> str:
+    """task / user_id 只用于记账：后台按环节、按用户统计调用量和成本。"""
     if not DEEPSEEK_API_KEY:
         raise LLMError("未配置 DEEPSEEK_API_KEY")
     body = {
@@ -36,7 +38,25 @@ def chat(messages: list[dict], *, json_mode: bool = False, temperature: float = 
         resp.raise_for_status()
     except httpx.HTTPError as e:
         raise LLMError(f"DeepSeek 请求失败: {e}") from e
-    return resp.json()["choices"][0]["message"]["content"] or ""
+    data = resp.json()
+    _record_usage(task, user_id, data.get("usage") or {})
+    return data["choices"][0]["message"]["content"] or ""
+
+
+def _record_usage(task: str, user_id: int | None, usage: dict) -> None:
+    prompt = usage.get("prompt_tokens") or 0
+    cached = usage.get("prompt_cache_hit_tokens") or 0
+    completion = usage.get("completion_tokens") or 0
+    cost = ((prompt - cached) * DEEPSEEK_PRICE_INPUT + cached * DEEPSEEK_PRICE_CACHED
+            + completion * DEEPSEEK_PRICE_OUTPUT) / 1e6
+    try:
+        from .db import get_conn
+
+        with get_conn() as conn:
+            conn.execute("INSERT INTO llm_usage (task, user_id, prompt_tokens, cached_tokens, completion_tokens, cost)"
+                         " VALUES (?, ?, ?, ?, ?, ?)", (task, user_id, prompt, cached, completion, cost))
+    except Exception:
+        log.exception("record usage failed")  # 记账失败不影响主流程
 
 
 def chat_json(messages: list[dict], **kwargs) -> dict:

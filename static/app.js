@@ -48,6 +48,7 @@ async function boot() {
   try { state.me = await api("/api/me"); } catch { return; }
   $("#auth").classList.add("hidden");
   $("#app").classList.remove("hidden");
+  $("#btn-admin").classList.toggle("hidden", !state.me.is_admin);
   await refresh();
   pollStatus();
 }

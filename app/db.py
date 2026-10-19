@@ -82,6 +82,31 @@ CREATE TABLE IF NOT EXISTS user_digests (
     updated_at TEXT DEFAULT CURRENT_TIMESTAMP,
     UNIQUE (user_id, digest_date)
 );
+-- 模型调用记账（后台看成本）
+CREATE TABLE IF NOT EXISTS llm_usage (
+    id INTEGER PRIMARY KEY,
+    task TEXT NOT NULL,
+    user_id INTEGER,
+    prompt_tokens INTEGER DEFAULT 0,
+    cached_tokens INTEGER DEFAULT 0,
+    completion_tokens INTEGER DEFAULT 0,
+    cost REAL DEFAULT 0,
+    at TEXT DEFAULT CURRENT_TIMESTAMP
+);
+CREATE INDEX IF NOT EXISTS idx_llm_usage_at ON llm_usage (at);
+-- 检索任务历史
+CREATE TABLE IF NOT EXISTS jobs (
+    id INTEGER PRIMARY KEY,
+    label TEXT NOT NULL,
+    user_id INTEGER,
+    company_count INTEGER DEFAULT 0,
+    status TEXT NOT NULL DEFAULT 'running',
+    progress TEXT DEFAULT '',
+    errors_json TEXT DEFAULT '[]',
+    items_added INTEGER DEFAULT 0,
+    started_at TEXT DEFAULT CURRENT_TIMESTAMP,
+    finished_at TEXT
+);
 CREATE TABLE IF NOT EXISTS chat_messages (
     id INTEGER PRIMARY KEY,
     company_id INTEGER NOT NULL REFERENCES companies(id) ON DELETE CASCADE,
@@ -114,9 +139,26 @@ def get_conn():
         conn.close()
 
 
+# 已有数据库上补加的列：(表, 列, 定义)
+MIGRATIONS = [
+    ("users", "role", "TEXT NOT NULL DEFAULT 'user'"),
+    ("users", "banned", "INTEGER NOT NULL DEFAULT 0"),
+    ("users", "last_login_at", "TEXT"),
+]
+
+
 def init_db() -> None:
+    from .config import ADMIN_USERNAMES
+
     with get_conn() as conn:
         conn.executescript(SCHEMA)
+        for table, col, ddl in MIGRATIONS:
+            cols = {r["name"] for r in conn.execute(f"PRAGMA table_info({table})")}
+            if col not in cols:
+                conn.execute(f"ALTER TABLE {table} ADD COLUMN {col} {ddl}")
+        if ADMIN_USERNAMES:
+            conn.execute(f"UPDATE users SET role = 'admin' WHERE username IN ({','.join('?' * len(ADMIN_USERNAMES))})",
+                         ADMIN_USERNAMES)
 
 
 def alert_condition(threshold_sql: str = "u.alert_threshold") -> str:

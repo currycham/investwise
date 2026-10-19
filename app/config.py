@@ -15,6 +15,13 @@ FINNHUB_API_KEY = os.getenv("FINNHUB_API_KEY", "")
 SEC_USER_AGENT = os.getenv("SEC_USER_AGENT", "InvestWise admin@example.com")
 
 INVITE_CODE = os.getenv("INVITE_CODE", "change-me")
+# 这些用户名注册或启动时自动成为管理员（逗号分隔）；其他管理员可在后台设置
+ADMIN_USERNAMES = [u.strip() for u in os.getenv("ADMIN_USERNAMES", "佳侣").split(",") if u.strip()]
+
+# DeepSeek 单价（元 / 百万 tokens），只用于后台成本估算，以控制台账单为准
+DEEPSEEK_PRICE_INPUT = float(os.getenv("DEEPSEEK_PRICE_INPUT", "2"))
+DEEPSEEK_PRICE_CACHED = float(os.getenv("DEEPSEEK_PRICE_CACHED", "0.2"))
+DEEPSEEK_PRICE_OUTPUT = float(os.getenv("DEEPSEEK_PRICE_OUTPUT", "3"))
 DAILY_RUN_TIME = os.getenv("DAILY_RUN_TIME", "07:30")
 TIMEZONE = "Asia/Shanghai"
 

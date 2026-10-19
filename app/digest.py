@@ -46,7 +46,7 @@ def generate(user_id: int) -> None:
     rows = [_company_row(c, by_company[c["id"]]) for c in companies if c["id"] in by_company]
     rows.sort(key=lambda r: (-r["alerts"], -abs(r["score"])))
 
-    text = _write(companies, rows, by_company)
+    text = _write(user_id, companies, rows, by_company)
     for r in rows:
         r["summary"] = text["summaries"].get(str(r["company_id"])) or r["top_title"]
     with get_conn() as conn:
@@ -89,7 +89,7 @@ def _company_row(company: dict, items: list[dict]) -> dict:
     }
 
 
-def _write(companies: list[dict], rows: list[dict], by_company: dict[int, list[dict]]) -> dict:
+def _write(user_id: int, companies: list[dict], rows: list[dict], by_company: dict[int, list[dict]]) -> dict:
     quiet = [c["name"] for c in companies if c["id"] not in by_company]
     blocks = []
     for r in rows:
@@ -108,7 +108,7 @@ def _write(companies: list[dict], rows: list[dict], by_company: dict[int, list[d
                 "summaries": {}, "reflections": []}
     try:
         out = llm.chat_json([{"role": "system", "content": DIGEST_SYSTEM}, {"role": "user", "content": user_msg}],
-                            temperature=0.4, max_tokens=2500)
+                            temperature=0.4, max_tokens=2500, task="digest", user_id=user_id)
     except Exception:
         log.exception("digest generation failed")
         return fallback

@@ -181,3 +181,29 @@ dialog h3 { margin-top: 0; }
   .digest-row > span:last-child { grid-column: 1 / -1; }
   .company-meta { margin-left: 0; }
 }
+
+/* 后台 */
+.admin-nav { display: flex; gap: 4px; flex-wrap: wrap; }
+.admin-nav a { padding: 6px 12px; border-radius: 6px; text-decoration: none; color: var(--text); }
+.admin-nav a.on { background: var(--primary); color: var(--primary-text); }
+.card { background: var(--card); border: 1px solid var(--border); border-radius: 10px; padding: 12px 16px; margin-bottom: 12px; }
+.row-between { display: flex; justify-content: space-between; align-items: center; gap: 8px; flex-wrap: wrap; }
+.stats { display: grid; grid-template-columns: repeat(auto-fill, minmax(160px, 1fr)); gap: 10px; margin-bottom: 12px; }
+.stat { background: var(--card); border: 1px solid var(--border); border-radius: 10px; padding: 12px 14px; }
+.stat .v { font-size: 20px; font-weight: 700; font-variant-numeric: tabular-nums; }
+.stat .k { color: var(--muted); font-size: 12px; }
+.two-col { display: grid; grid-template-columns: 3fr 2fr; gap: 12px; }
+.tbl { overflow-x: auto; background: var(--card); border: 1px solid var(--border); border-radius: 10px; margin-bottom: 12px; }
+.tbl table { width: 100%; border-collapse: collapse; font-size: 13px; }
+.tbl th, .tbl td { padding: 8px 10px; border-bottom: 1px solid var(--border); text-align: left; vertical-align: top; }
+.tbl th { color: var(--muted); font-weight: 500; white-space: nowrap; }
+.tbl tr:last-child td { border-bottom: 0; }
+.num { font-variant-numeric: tabular-nums; white-space: nowrap; }
+.bad { color: var(--bull); }
+.dim td { opacity: .55; }
+.warn-row td { background: var(--alert-bg); }
+.actions { display: flex; gap: 4px; flex-wrap: wrap; }
+button.danger { color: var(--bull); border-color: var(--bull); }
+.flash { position: sticky; top: 64px; z-index: 6; background: var(--bear-bg); color: var(--bear); padding: 8px 12px; border-radius: 8px; }
+.flash.error { background: var(--bull-bg); color: var(--bull); }
+@media (max-width: 760px) { .two-col { grid-template-columns: 1fr; } }

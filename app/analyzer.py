@@ -49,6 +49,11 @@ def enqueue_backfill(user_id: int, company_ids: list[int]) -> None:
         enqueue(user_id, company_ids, BACKFILL_DAYS * 24, f"新持仓回溯{BACKFILL_DAYS}天")
 
 
+def pending_jobs() -> list[dict]:
+    with _worker_lock:
+        return [dict(j) for j in _pending]
+
+
 def pending_for(user_id: int) -> int:
     with _worker_lock:
         return sum(1 for j in _pending if j["user_id"] in (None, user_id))
@@ -79,6 +84,7 @@ def run(user_id: int | None = None, company_ids: list[int] | None = None,
     """同步执行一次检索。user_id 为空时处理所有用户；company_ids 限定只处理这些公司。"""
     status.update(running=True, label=label, user_id=user_id, progress="开始", errors=[],
                   started_at=now_local().isoformat(timespec="seconds"), finished_at=None)
+    job_id = None
     try:
         sql, args = "SELECT * FROM companies WHERE 1 = 1", []
         if user_id:
@@ -88,6 +94,8 @@ def run(user_id: int | None = None, company_ids: list[int] | None = None,
             args += company_ids
         with get_conn() as conn:
             companies = [dict(r) for r in conn.execute(sql, args)]
+            job_id = conn.execute("INSERT INTO jobs (label, user_id, company_count) VALUES (?, ?, ?)",
+                                  (label, user_id, len(companies))).lastrowid
 
         targets = {(c["market"], c["ticker"]): c["name"] for c in companies}
         for i, ((market, ticker), name) in enumerate(targets.items(), 1):
@@ -114,8 +122,24 @@ def run(user_id: int | None = None, company_ids: list[int] | None = None,
                 log.exception("digest failed")
                 status["errors"].append(f"今日概览生成失败：{e}")
         status["progress"] = "完成"
+    except Exception as e:
+        status["errors"].append(f"任务中断：{e}")
+        raise
     finally:
         status.update(running=False, finished_at=now_local().isoformat(timespec="seconds"))
+        if job_id:
+            _finish_job(job_id)
+
+
+def _finish_job(job_id: int) -> None:
+    with get_conn() as conn:
+        started = conn.execute("SELECT started_at FROM jobs WHERE id = ?", (job_id,)).fetchone()["started_at"]
+        added = conn.execute("SELECT COUNT(*) FROM report_items WHERE created_at >= ?", (started,)).fetchone()[0]
+        conn.execute(
+            "UPDATE jobs SET status = ?, progress = ?, errors_json = ?, items_added = ?,"
+            " finished_at = CURRENT_TIMESTAMP WHERE id = ?",
+            ("done" if status["progress"] == "完成" else "failed", status["progress"],
+             json.dumps(status["errors"], ensure_ascii=False), added, job_id))
 
 
 def _store_news(market: str, ticker: str, items: list[dict]) -> None:
@@ -161,7 +185,7 @@ def analyze_company(company: dict, lookback_hours: int = NEWS_LOOKBACK_HOURS) ->
     )
     result = llm.chat_json(
         [{"role": "system", "content": ANALYSIS_SYSTEM}, {"role": "user", "content": user_msg}],
-        temperature=0.2, max_tokens=8000 if backfill else 6000,
+        temperature=0.2, max_tokens=8000 if backfill else 6000, task="analyze", user_id=company["user_id"],
     )
 
     summaries = result.get("day_summaries") or {}

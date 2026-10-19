@@ -1,17 +1,16 @@
-import hashlib
 import json
 import logging
-import secrets
 from contextlib import asynccontextmanager
 
 from apscheduler.schedulers.background import BackgroundScheduler
 from fastapi import Cookie, Depends, FastAPI, File, Form, HTTPException, Response, UploadFile
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, PlainTextResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
-from . import analyzer, digest, llm, parser
-from .config import BASE_DIR, DAILY_RUN_TIME, INVITE_CODE, TIMEZONE
+from . import admin, analyzer, digest, llm, parser
+from .auth import current_user, hash_pw, login_session, user_from_session, verify_pw
+from .config import ADMIN_USERNAMES, BASE_DIR, DAILY_RUN_TIME, INVITE_CODE, TIMEZONE
 from .db import alert_condition, get_conn, init_db
 from .prompts import SOCRATIC_SYSTEM
 
@@ -30,43 +29,15 @@ async def lifespan(_app):
 
 
 app = FastAPI(title="InvestWise", lifespan=lifespan)
+app.include_router(admin.router)
 
 
 # ---------- 认证 ----------
-
-def _hash_pw(password: str, salt: str | None = None) -> str:
-    salt = salt or secrets.token_hex(16)
-    digest = hashlib.pbkdf2_hmac("sha256", password.encode(), salt.encode(), 200_000).hex()
-    return f"{salt}${digest}"
-
-
-def _verify_pw(password: str, stored: str) -> bool:
-    salt, _ = stored.split("$", 1)
-    return secrets.compare_digest(_hash_pw(password, salt), stored)
-
-
-def current_user(session: str | None = Cookie(default=None)) -> dict:
-    if not session:
-        raise HTTPException(401, "未登录")
-    with get_conn() as conn:
-        row = conn.execute("SELECT u.* FROM sessions s JOIN users u ON u.id = s.user_id WHERE s.token = ?",
-                           (session,)).fetchone()
-    if not row:
-        raise HTTPException(401, "未登录")
-    return dict(row)
-
 
 class Credentials(BaseModel):
     username: str = Field(min_length=2, max_length=32)
     password: str = Field(min_length=6, max_length=128)
     invite_code: str = ""
-
-
-def _login(response: Response, user_id: int) -> None:
-    token = secrets.token_urlsafe(32)
-    with get_conn() as conn:
-        conn.execute("INSERT INTO sessions (token, user_id) VALUES (?, ?)", (token, user_id))
-    response.set_cookie("session", token, httponly=True, samesite="lax", max_age=60 * 60 * 24 * 30)
 
 
 @app.post("/api/register")
@@ -76,9 +47,10 @@ def register(body: Credentials, response: Response):
     with get_conn() as conn:
         if conn.execute("SELECT 1 FROM users WHERE username = ?", (body.username,)).fetchone():
             raise HTTPException(409, "用户名已存在")
-        cur = conn.execute("INSERT INTO users (username, pw_hash) VALUES (?, ?)",
-                           (body.username, _hash_pw(body.password)))
-    _login(response, cur.lastrowid)
+        role = "admin" if body.username in ADMIN_USERNAMES else "user"
+        cur = conn.execute("INSERT INTO users (username, pw_hash, role) VALUES (?, ?, ?)",
+                           (body.username, hash_pw(body.password), role))
+    login_session(response, cur.lastrowid)
     return {"ok": True}
 
 
@@ -86,9 +58,11 @@ def register(body: Credentials, response: Response):
 def login(body: Credentials, response: Response):
     with get_conn() as conn:
         row = conn.execute("SELECT * FROM users WHERE username = ?", (body.username,)).fetchone()
-    if not row or not _verify_pw(body.password, row["pw_hash"]):
+    if not row or not verify_pw(body.password, row["pw_hash"]):
         raise HTTPException(401, "用户名或密码错误")
-    _login(response, row["id"])
+    if row["banned"]:
+        raise HTTPException(403, "账号已停用，请联系管理员")
+    login_session(response, row["id"])
     return {"ok": True}
 
 
@@ -103,7 +77,7 @@ def logout(response: Response, session: str | None = Cookie(default=None)):
 
 @app.get("/api/me")
 def me(user: dict = Depends(current_user)):
-    return {"username": user["username"], "alert_threshold": user["alert_threshold"]}
+    return {"username": user["username"], "alert_threshold": user["alert_threshold"], "is_admin": user["role"] == "admin"}
 
 
 class Settings(BaseModel):
@@ -210,7 +184,7 @@ async def import_parse(text: str = Form(default=""), file: UploadFile | None = F
             text = parser.file_to_text(file.filename, data) + "\n" + text
         except Exception as e:
             raise HTTPException(400, f"文件解析失败：{e}")
-    return parser.parse_companies(text)
+    return parser.parse_companies(text, user["id"])
 
 
 class ImportConfirm(BaseModel):
@@ -353,7 +327,7 @@ def chat(company_id: int, body: ChatIn, user: dict = Depends(current_user)):
     messages = [{"role": "system", "content": SOCRATIC_SYSTEM + "\n\n" + context}, *history,
                 {"role": "user", "content": body.message}]
     try:
-        reply = llm.chat(messages, temperature=0.7, max_tokens=1200)
+        reply = llm.chat(messages, temperature=0.7, max_tokens=1200, task="socratic", user_id=user["id"])
     except llm.LLMError as e:
         raise HTTPException(502, str(e))
     with get_conn() as conn:
@@ -379,3 +353,11 @@ app.mount("/static", StaticFiles(directory=STATIC), name="static")
 @app.get("/")
 def index():
     return FileResponse(STATIC / "index.html")
+
+
+@app.get("/admin")
+def admin_page(session: str | None = Cookie(default=None)):
+    user = user_from_session(session)
+    if not user or user["role"] != "admin":
+        return PlainTextResponse("Not Found", status_code=404)
+    return FileResponse(STATIC / "admin.html")

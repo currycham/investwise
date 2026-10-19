@@ -53,14 +53,14 @@ def normalize(ticker: str, market: str | None = None) -> tuple[str, str] | None:
     return None
 
 
-def parse_companies(text: str) -> dict:
+def parse_companies(text: str, user_id: int | None = None) -> dict:
     text = text.strip()[:MAX_TEXT]
     if not text:
         return {"companies": [], "uncertain": []}
     try:
         result = llm.chat_json(
             [{"role": "system", "content": PARSE_SYSTEM}, {"role": "user", "content": text}],
-            temperature=0,
+            temperature=0, task="parse", user_id=user_id,
         )
     except llm.LLMError:
         return _regex_fallback(text)
