@@ -10,7 +10,7 @@ import threading
 from datetime import datetime, timedelta, timezone
 from zoneinfo import ZoneInfo
 
-from . import costs, digest, llm, sources
+from . import costs, digest, llm, notify, sources
 from .config import BACKFILL_DAYS, INACTIVE_DAYS, NEWS_LOOKBACK_HOURS, TIMEZONE
 from .db import get_conn
 from .prompts import ANALYSIS_SYSTEM
@@ -132,6 +132,11 @@ def run(user_id: int | None = None, company_ids: list[int] | None = None,
             except Exception as e:
                 log.exception("digest failed")
                 status["errors"].append(f"今日概览生成失败：{e}")
+            try:
+                notify.send_alerts(uid)
+            except Exception as e:
+                log.exception("alert email failed")
+                status["errors"].append(f"预警邮件发送失败：{e}")
         status["progress"] = "完成"
     except Exception as e:
         status["errors"].append(f"任务中断：{e}")

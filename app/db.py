@@ -145,6 +145,9 @@ MIGRATIONS = [
     ("users", "banned", "INTEGER NOT NULL DEFAULT 0"),
     ("users", "last_login_at", "TEXT"),
     ("users", "last_seen_at", "TEXT"),
+    ("users", "email", "TEXT NOT NULL DEFAULT ''"),
+    ("users", "email_alerts", "INTEGER NOT NULL DEFAULT 1"),
+    ("report_items", "notified_at", "TEXT"),  # 预警邮件已发送时间
 ]
 
 

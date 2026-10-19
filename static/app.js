@@ -298,13 +298,31 @@ $("#cf-save").onclick = async () => {
 $("#btn-settings").onclick = () => {
   $("#th-range").value = state.me.alert_threshold;
   $("#th-val").textContent = state.me.alert_threshold;
+  $("#em-addr").value = state.me.email || "";
+  $("#em-on").checked = state.me.email_alerts;
+  $("#em-error").textContent = "";
+  const off = !state.me.email_enabled;
+  ["#em-addr", "#em-on", "#em-test"].forEach((s) => ($(s).disabled = off));
+  if (off) $("#em-error").textContent = "站点还没配置发信邮箱，暂时不能用邮件预警。";
   $("#dlg-settings").showModal();
+};
+$("#em-test").onclick = async () => {
+  $("#em-error").textContent = "";
+  $("#em-test").disabled = true;
+  try {
+    await api("/api/settings/test-email", { json: { email: $("#em-addr").value.trim() } });
+    $("#em-error").textContent = "已发送，请查收（可能在垃圾邮件里）。";
+  } catch (e) { $("#em-error").textContent = e.message; }
+  $("#em-test").disabled = false;
 };
 $("#th-range").oninput = () => ($("#th-val").textContent = $("#th-range").value);
 $("#th-save").onclick = async () => {
-  const v = Number($("#th-range").value);
-  await api("/api/settings", { method: "PUT", json: { alert_threshold: v } });
-  state.me.alert_threshold = v;
+  const body = { alert_threshold: Number($("#th-range").value), email: $("#em-addr").value.trim(),
+    email_alerts: $("#em-on").checked };
+  try {
+    await api("/api/settings", { method: "PUT", json: body });
+  } catch (e) { $("#em-error").textContent = /pattern|string/i.test(e.message) ? "邮箱格式不对" : e.message; return; }
+  Object.assign(state.me, body);
   $("#dlg-settings").close();
   refresh();
 };

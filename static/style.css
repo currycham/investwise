@@ -50,6 +50,9 @@ input, textarea, select {
 textarea { resize: vertical; }
 label { display: block; margin: 10px 0; font-size: 13px; color: var(--muted); }
 label input, label textarea, label select { margin-top: 4px; color: var(--text); }
+label.check { display: flex; align-items: center; gap: 6px; color: var(--text); }
+label.check input { width: auto; margin: 0; }
+dialog h3 + label, dialog p + h3 { margin-top: 14px; }
 
 /* 登录 */
 .auth { min-height: 100vh; display: grid; place-items: center; padding: 16px; }

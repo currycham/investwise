@@ -1,5 +1,6 @@
 import json
 import logging
+import time
 from contextlib import asynccontextmanager
 
 from apscheduler.schedulers.background import BackgroundScheduler
@@ -8,7 +9,7 @@ from fastapi.responses import FileResponse, PlainTextResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
-from . import admin, analyzer, digest, llm, parser
+from . import admin, analyzer, digest, llm, notify, parser
 from .auth import current_user, hash_pw, login_session, user_from_session, verify_pw
 from .config import ADMIN_USERNAMES, BASE_DIR, DAILY_RUN_TIME, INVITE_CODE, TIMEZONE
 from .db import alert_condition, get_conn, init_db
@@ -16,6 +17,7 @@ from .prompts import SOCRATIC_SYSTEM
 
 logging.basicConfig(level=logging.INFO)
 scheduler = BackgroundScheduler(timezone=TIMEZONE)
+EMAIL_RE = r"^$|^[^@\s]+@[^@\s]+\.[^@\s]+$"
 
 
 @asynccontextmanager
@@ -77,17 +79,42 @@ def logout(response: Response, session: str | None = Cookie(default=None)):
 
 @app.get("/api/me")
 def me(user: dict = Depends(current_user)):
-    return {"username": user["username"], "alert_threshold": user["alert_threshold"], "is_admin": user["role"] == "admin"}
+    return {"username": user["username"], "alert_threshold": user["alert_threshold"], "is_admin": user["role"] == "admin",
+            "email": user["email"], "email_alerts": bool(user["email_alerts"]), "email_enabled": notify.enabled()}
 
 
 class Settings(BaseModel):
     alert_threshold: int = Field(ge=1, le=10)
+    email: str = Field(default="", max_length=200, pattern=EMAIL_RE)
+    email_alerts: bool = True
 
 
 @app.put("/api/settings")
 def update_settings(body: Settings, user: dict = Depends(current_user)):
     with get_conn() as conn:
-        conn.execute("UPDATE users SET alert_threshold = ? WHERE id = ?", (body.alert_threshold, user["id"]))
+        conn.execute("UPDATE users SET alert_threshold = ?, email = ?, email_alerts = ? WHERE id = ?",
+                     (body.alert_threshold, body.email.strip(), int(body.email_alerts), user["id"]))
+    return {"ok": True}
+
+
+class TestEmail(BaseModel):
+    email: str = Field(min_length=3, max_length=200, pattern=EMAIL_RE)
+
+
+_last_test_email: dict[int, float] = {}
+
+
+@app.post("/api/settings/test-email")
+def test_email(body: TestEmail, user: dict = Depends(current_user)):
+    if not notify.enabled():
+        raise HTTPException(400, "站点还没配置发信邮箱（SMTP），请联系管理员")
+    if time.time() - _last_test_email.get(user["id"], 0) < 60:
+        raise HTTPException(429, "一分钟内只能发一封测试邮件")
+    _last_test_email[user["id"]] = time.time()
+    try:
+        notify.send_test(body.email.strip())
+    except Exception as e:
+        raise HTTPException(502, f"发送失败：{e}")
     return {"ok": True}
 
 

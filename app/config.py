@@ -16,7 +16,7 @@ SEC_USER_AGENT = os.getenv("SEC_USER_AGENT", "InvestWise admin@example.com")
 
 INVITE_CODE = os.getenv("INVITE_CODE", "change-me")
 # 这些用户名注册或启动时自动成为管理员（逗号分隔）；其他管理员可在后台设置
-ADMIN_USERNAMES = [u.strip() for u in os.getenv("ADMIN_USERNAMES", "佳侣").split(",") if u.strip()]
+ADMIN_USERNAMES = [u.strip() for u in os.getenv("ADMIN_USERNAMES", "").split(",") if u.strip()]
 
 # DeepSeek 单价（元 / 百万 tokens），只用于后台成本估算，以控制台账单为准
 DEEPSEEK_PRICE_INPUT = float(os.getenv("DEEPSEEK_PRICE_INPUT", "2"))
@@ -33,6 +33,14 @@ INACTIVE_DAYS = int(os.getenv("INACTIVE_DAYS", "14"))
 DAILY_BUDGET_YUAN = float(os.getenv("DAILY_BUDGET_YUAN", "10"))
 DAILY_RUN_TIME = os.getenv("DAILY_RUN_TIME", "07:30")
 TIMEZONE = "Asia/Shanghai"
+
+# ---------- 预警邮件（不填则不发） ----------
+SMTP_HOST = os.getenv("SMTP_HOST", "")
+SMTP_PORT = int(os.getenv("SMTP_PORT", "465"))
+SMTP_USER = os.getenv("SMTP_USER", "")
+SMTP_PASSWORD = os.getenv("SMTP_PASSWORD", "")
+SMTP_FROM = os.getenv("SMTP_FROM", "")  # 默认同 SMTP_USER
+SITE_URL = os.getenv("SITE_URL", "http://localhost:8000").rstrip("/")
 
 DB_PATH = Path(os.getenv("DB_PATH", BASE_DIR / "data" / "investwise.db"))
 

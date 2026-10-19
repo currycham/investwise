@@ -111,7 +111,15 @@
     <input id="th-range" type="range" min="1" max="10" step="1">
   </label>
   <p class="muted small">评分范围 -10 ~ +10。±6 以上表示实质性改变盈利预期或竞争格局。置信度低于 0.6 的信息不预警；被判定为"证伪你的投资逻辑"的信息总会预警。</p>
+  <h3>邮件预警</h3>
+  <label>邮箱
+    <input id="em-addr" type="email" placeholder="you@example.com" autocomplete="email">
+  </label>
+  <label class="check"><input id="em-on" type="checkbox"> 检索出新的预警时发邮件给我</label>
+  <p id="em-note" class="muted small">每次检索结束后，把新出现的预警汇总成一封邮件，每条只发一次；没有预警就不发。</p>
+  <p id="em-error" class="error"></p>
   <div class="dlg-actions">
+    <button id="em-test">发测试邮件</button>
     <button data-close>取消</button>
     <button id="th-save" class="primary">保存</button>
   </div>
