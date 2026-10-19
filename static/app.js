@@ -169,12 +169,19 @@ async function pollStatus() {
   clearTimeout(pollTimer);
   const s = await api("/api/run/status").catch(() => null);
   if (!s) return;
-  $("#btn-run").disabled = s.running;
-  $("#run-status").textContent = s.running ? `检索中：${s.progress}`
+  const active = s.running || s.pending > 0;
+  $("#btn-run").disabled = active;
+  $("#run-status").textContent = s.running ? `${s.label}中：${s.progress}${s.pending ? `（另有 ${s.pending} 个排队）` : ""}`
+    : s.pending ? "检索任务排队中…"
     : s.finished_at ? `上次检索 ${s.finished_at.replace("T", " ")}${s.errors.length ? `（${s.errors.length} 个错误）` : ""}` : "";
   $("#run-status").title = s.errors.join("\n");
-  if (s.running) { pollTimer = setTimeout(pollStatus, 2000); state.wasRunning = true; }
-  else if (state.wasRunning) { state.wasRunning = false; refresh(); }
+  if (active) {
+    // 每个任务完成后刷新一次页面数据
+    if (state.lastFinished && s.finished_at !== state.lastFinished) refresh();
+    state.lastFinished = s.finished_at;
+    pollTimer = setTimeout(pollStatus, 2000);
+    state.wasRunning = true;
+  } else if (state.wasRunning) { state.wasRunning = false; refresh(); }
 }
 
 // ---------- 导入 ----------
@@ -226,7 +233,7 @@ $("#import-confirm").onclick = async () => {
     $("#import-text").value = "";
     $("#import-file").value = "";
     await refresh();
-    if (r.added && confirm(`已导入 ${r.added} 家公司。现在检索今天的信息吗？`)) $("#btn-run").click();
+    if (r.added) pollStatus();
   } catch (e) { $("#import-error").textContent = e.message; }
 };
 
@@ -250,7 +257,8 @@ $("#cf-save").onclick = async () => {
     if (state.editing) await api(`/api/companies/${state.editing.id}`, { method: "PUT", json: body });
     else await api("/api/companies", { json: body });
     $("#dlg-company").close();
-    refresh();
+    await refresh();
+    pollStatus();
   } catch (e) { $("#cf-error").textContent = e.message; }
 };
 

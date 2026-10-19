@@ -47,7 +47,7 @@ def akshare_stock_news(ticker: str) -> list[dict]:
     ]
 
 
-def bocha_search(query: str, count: int = 10) -> list[dict]:
+def bocha_search(query: str, count: int = 10, freshness: str = "oneDay") -> list[dict]:
     """博查 AI 搜索，覆盖中文财经媒体与公告转载。"""
     if not BOCHA_API_KEY:
         return []
@@ -55,7 +55,7 @@ def bocha_search(query: str, count: int = 10) -> list[dict]:
         resp = httpx.post(
             "https://api.bochaai.com/v1/web-search",
             headers={"Authorization": f"Bearer {BOCHA_API_KEY}"},
-            json={"query": query, "freshness": "oneDay", "summary": True, "count": count},
+            json={"query": query, "freshness": freshness, "summary": True, "count": count},
             timeout=30,
         )
         resp.raise_for_status()
@@ -70,7 +70,7 @@ def bocha_search(query: str, count: int = 10) -> list[dict]:
     ]
 
 
-def finnhub_company_news(symbol: str, since: datetime) -> list[dict]:
+def finnhub_company_news(symbol: str, since: datetime, limit: int = 30) -> list[dict]:
     if not FINNHUB_API_KEY:
         return []
     try:
@@ -92,7 +92,7 @@ def finnhub_company_news(symbol: str, since: datetime) -> list[dict]:
     return [
         _item(r.get("headline"), r.get("summary"), r.get("url"), r.get("source") or "Finnhub",
               datetime.fromtimestamp(r["datetime"]).isoformat() if r.get("datetime") else "")
-        for r in rows[:30]
+        for r in rows[:limit]
     ]
 
 
@@ -142,28 +142,35 @@ def sec_filings(symbol: str, since: datetime) -> list[dict]:
 
 def fetch_news(market: str, ticker: str, name: str, lookback_hours: int) -> list[dict]:
     since = datetime.now() - timedelta(hours=lookback_hours)
+    # 日常检索看一天；新增持仓回溯时放宽搜索范围、多取几条
+    daily = lookback_hours <= 36
+    freshness, count = ("oneDay", 10) if daily else ("oneWeek", 25)
     items: list[dict] = []
     if market == "A":
         items += akshare_stock_news(ticker)
-        items += bocha_search(f"{name} {ticker} 公告 最新消息")
+        items += bocha_search(f"{name} {ticker} 公告 最新消息", count, freshness)
     elif market == "HK":
-        items += bocha_search(f"{name} {ticker}.HK 港股 公告 最新消息")
+        items += bocha_search(f"{name} {ticker}.HK 港股 公告 最新消息", count, freshness)
     elif market == "US":
-        items += finnhub_company_news(ticker, since)
+        items += finnhub_company_news(ticker, since, 30 if daily else 60)
         items += sec_filings(ticker, since)
-        items += bocha_search(f"{name} {ticker} 美股 最新消息")
+        items += bocha_search(f"{name} {ticker} 美股 最新消息", count, freshness)
     return [i for i in items if i["title"] and _is_recent(i["published_at"], since)]
 
 
-def _is_recent(published_at: str, since: datetime) -> bool:
-    """时间无法解析时保留，交给模型判断是否旧闻。"""
-    s = published_at.strip().replace("T", " ").replace("Z", "")
-    for fmt, n in (("%Y-%m-%d %H:%M:%S", 19), ("%Y-%m-%d %H:%M", 16)):
+def parse_time(published_at: str) -> datetime | None:
+    s = (published_at or "").strip().replace("T", " ").replace("Z", "")
+    for fmt, n in (("%Y-%m-%d %H:%M:%S", 19), ("%Y-%m-%d %H:%M", 16), ("%Y-%m-%d", 10)):
         try:
-            return datetime.strptime(s[:n], fmt) >= since
+            return datetime.strptime(s[:n], fmt)
         except ValueError:
             continue
-    try:
-        return datetime.strptime(s[:10], "%Y-%m-%d").date() >= since.date()
-    except ValueError:
+    return None
+
+
+def _is_recent(published_at: str, since: datetime) -> bool:
+    """时间无法解析时保留，交给模型判断是否旧闻。只有日期没有时间的按天比较。"""
+    t = parse_time(published_at)
+    if t is None:
         return True
+    return t.date() >= since.date() if len(published_at.strip()) <= 10 else t >= since

@@ -2,7 +2,6 @@ import hashlib
 import json
 import logging
 import secrets
-import threading
 from contextlib import asynccontextmanager
 
 from apscheduler.schedulers.background import BackgroundScheduler
@@ -24,7 +23,7 @@ scheduler = BackgroundScheduler(timezone=TIMEZONE)
 async def lifespan(_app):
     init_db()
     hour, minute = DAILY_RUN_TIME.split(":")
-    scheduler.add_job(analyzer.run, "cron", hour=int(hour), minute=int(minute), id="daily", replace_existing=True)
+    scheduler.add_job(analyzer.enqueue, "cron", hour=int(hour), minute=int(minute), id="daily", replace_existing=True)
     scheduler.start()
     yield
     scheduler.shutdown(wait=False)
@@ -168,6 +167,7 @@ def add_company(body: CompanyIn, user: dict = Depends(current_user)):
         )
         if not cur.rowcount:
             raise HTTPException(409, "已在列表中")
+    analyzer.enqueue_backfill(user["id"], [cur.lastrowid])
     return {"id": cur.lastrowid}
 
 
@@ -186,6 +186,8 @@ def update_company(company_id: int, body: CompanyIn, user: dict = Depends(curren
             conn.execute("DELETE FROM daily_reports WHERE company_id = ?", (company_id,))
             conn.execute("DELETE FROM seen_news WHERE company_id = ?", (company_id,))
             conn.execute("DELETE FROM chat_messages WHERE company_id = ?", (company_id,))
+    if replaced:
+        analyzer.enqueue_backfill(user["id"], [company_id])
     return {"ok": True}
 
 
@@ -217,7 +219,7 @@ class ImportConfirm(BaseModel):
 
 @app.post("/api/import/confirm")
 def import_confirm(body: ImportConfirm, user: dict = Depends(current_user)):
-    added = 0
+    added: list[int] = []
     with get_conn() as conn:
         for c in body.companies:
             norm = parser.normalize(c.ticker, c.market or None)
@@ -227,8 +229,10 @@ def import_confirm(body: ImportConfirm, user: dict = Depends(current_user)):
                 "INSERT OR IGNORE INTO companies (user_id, name, ticker, market, thesis) VALUES (?, ?, ?, ?, ?)",
                 (user["id"], c.name.strip(), norm[1], norm[0], c.thesis.strip()),
             )
-            added += cur.rowcount
-    return {"added": added}
+            if cur.rowcount:
+                added.append(cur.lastrowid)
+    analyzer.enqueue_backfill(user["id"], added)
+    return {"added": len(added)}
 
 
 # ---------- 信息时间线与预警 ----------
@@ -278,15 +282,30 @@ def alerts(days: int = 7, user: dict = Depends(current_user)):
 
 @app.post("/api/run")
 def trigger_run(user: dict = Depends(current_user)):
-    if analyzer.status["running"]:
-        raise HTTPException(409, "已有检索任务在运行")
-    threading.Thread(target=analyzer.run, args=(user["id"],), daemon=True).start()
+    if analyzer.pending_for(user["id"]) or _own_running(user["id"]):
+        raise HTTPException(409, "已有检索任务在排队或运行")
+    analyzer.enqueue(user["id"], label="手动检索")
     return {"ok": True}
+
+
+def _own_running(user_id: int) -> bool:
+    s = analyzer.status
+    return s["running"] and s["user_id"] in (None, user_id)
 
 
 @app.get("/api/run/status")
 def run_status(user: dict = Depends(current_user)):
-    return analyzer.status
+    s = analyzer.status
+    mine = s["user_id"] in (None, user["id"])  # 不向其他用户透露你的任务细节
+    return {
+        "running": _own_running(user["id"]),
+        "busy": s["running"],
+        "pending": analyzer.pending_for(user["id"]),
+        "label": s["label"] if mine else "",
+        "progress": s["progress"] if mine else "",
+        "finished_at": s["finished_at"] if mine else None,
+        "errors": s["errors"] if mine else [],
+    }
 
 
 # ---------- 苏格拉底式提问助手 ----------

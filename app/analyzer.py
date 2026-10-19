@@ -1,60 +1,113 @@
-"""每日流水线：抓取（按公司去重）→ 过滤 + 多框架打分（按用户持仓，结合其投资逻辑）→ 入库。"""
+"""检索流水线：抓取（按公司去重）→ 过滤 + 多框架打分（按用户持仓，结合其投资逻辑）→ 按信息发布日期入库。
+
+所有任务（每日定时、手动检索、新增持仓回溯一周）都进同一个队列，由一个后台线程依次执行，互不冲突。
+"""
 import hashlib
 import json
 import logging
+import queue
 import threading
 from datetime import datetime, timedelta, timezone
 from zoneinfo import ZoneInfo
 
 from . import llm, sources
-from .config import NEWS_LOOKBACK_HOURS, TIMEZONE
+from .config import BACKFILL_DAYS, NEWS_LOOKBACK_HOURS, TIMEZONE
 from .db import get_conn
 from .prompts import ANALYSIS_SYSTEM
 
 log = logging.getLogger(__name__)
 
-_lock = threading.Lock()
-status = {"running": False, "started_at": None, "finished_at": None, "progress": "", "errors": []}
+_queue: queue.Queue = queue.Queue()
+_worker_lock = threading.Lock()
+_worker: threading.Thread | None = None
+_pending: list[dict] = []   # 排队中的任务（用于前端显示），与 _queue 同步
+status = {"running": False, "label": "", "user_id": None, "started_at": None, "finished_at": None,
+          "progress": "", "errors": []}
 
 MAX_CANDIDATES = 30
+MAX_CANDIDATES_BACKFILL = 60
 
 
 def now_local() -> datetime:
     return datetime.now(ZoneInfo(TIMEZONE)).replace(tzinfo=None)
 
 
-def run(user_id: int | None = None) -> bool:
-    """user_id 为空时处理所有用户。已有任务在跑时返回 False。"""
-    if not _lock.acquire(blocking=False):
-        return False
-    status.update(running=True, started_at=now_local().isoformat(timespec="seconds"),
-                  finished_at=None, progress="开始", errors=[])
+# ---------- 任务队列 ----------
+
+def enqueue(user_id: int | None = None, company_ids: list[int] | None = None,
+            lookback_hours: int = NEWS_LOOKBACK_HOURS, label: str = "每日检索") -> None:
+    job = {"user_id": user_id, "company_ids": company_ids, "lookback_hours": lookback_hours, "label": label}
+    with _worker_lock:
+        _pending.append(job)
+        _queue.put(job)
+        _ensure_worker()
+
+
+def enqueue_backfill(user_id: int, company_ids: list[int]) -> None:
+    """新加入/更换的持仓：先回溯最近一周，不用等到第二天的定时检索。"""
+    if company_ids:
+        enqueue(user_id, company_ids, BACKFILL_DAYS * 24, f"新持仓回溯{BACKFILL_DAYS}天")
+
+
+def pending_for(user_id: int) -> int:
+    with _worker_lock:
+        return sum(1 for j in _pending if j["user_id"] in (None, user_id))
+
+
+def _ensure_worker() -> None:
+    global _worker
+    if _worker is None or not _worker.is_alive():
+        _worker = threading.Thread(target=_work_loop, name="analyzer", daemon=True)
+        _worker.start()
+
+
+def _work_loop() -> None:
+    while True:
+        job = _queue.get()
+        with _worker_lock:
+            _pending.remove(job)
+        try:
+            run(**job)
+        except Exception:
+            log.exception("job failed: %s", job)
+
+
+# ---------- 执行 ----------
+
+def run(user_id: int | None = None, company_ids: list[int] | None = None,
+        lookback_hours: int = NEWS_LOOKBACK_HOURS, label: str = "每日检索") -> None:
+    """同步执行一次检索。user_id 为空时处理所有用户；company_ids 限定只处理这些公司。"""
+    status.update(running=True, label=label, user_id=user_id, progress="开始", errors=[],
+                  started_at=now_local().isoformat(timespec="seconds"), finished_at=None)
     try:
+        sql, args = "SELECT * FROM companies WHERE 1 = 1", []
+        if user_id:
+            sql, args = sql + " AND user_id = ?", args + [user_id]
+        if company_ids:
+            sql += f" AND id IN ({','.join('?' * len(company_ids))})"
+            args += company_ids
         with get_conn() as conn:
-            sql = "SELECT * FROM companies" + (" WHERE user_id = ?" if user_id else "")
-            companies = [dict(r) for r in conn.execute(sql, (user_id,) if user_id else ())]
+            companies = [dict(r) for r in conn.execute(sql, args)]
 
         targets = {(c["market"], c["ticker"]): c["name"] for c in companies}
         for i, ((market, ticker), name) in enumerate(targets.items(), 1):
-            status["progress"] = f"抓取 {i}/{len(targets)}：{name}"
+            status["progress"] = f"抓取 {i}/{len(targets)}"
             try:
-                _store_news(market, ticker, sources.fetch_news(market, ticker, name, NEWS_LOOKBACK_HOURS))
+                _store_news(market, ticker, sources.fetch_news(market, ticker, name, lookback_hours))
             except Exception as e:
                 log.exception("fetch failed")
                 status["errors"].append(f"{name} 抓取失败：{e}")
 
         for i, c in enumerate(companies, 1):
-            status["progress"] = f"分析 {i}/{len(companies)}：{c['name']}"
+            status["progress"] = f"分析 {i}/{len(companies)}"
             try:
-                analyze_company(c)
+                analyze_company(c, lookback_hours)
             except Exception as e:
                 log.exception("analyze failed")
                 status["errors"].append(f"{c['name']} 分析失败：{e}")
         status["progress"] = "完成"
     finally:
         status.update(running=False, finished_at=now_local().isoformat(timespec="seconds"))
-        _lock.release()
-    return True
 
 
 def _store_news(market: str, ticker: str, items: list[dict]) -> None:
@@ -69,56 +122,55 @@ def _store_news(market: str, ticker: str, items: list[dict]) -> None:
             )
 
 
-def analyze_company(company: dict) -> None:
-    since = (datetime.now(timezone.utc) - timedelta(hours=NEWS_LOOKBACK_HOURS)).strftime("%Y-%m-%d %H:%M:%S")
+def analyze_company(company: dict, lookback_hours: int = NEWS_LOOKBACK_HOURS) -> None:
+    backfill = lookback_hours > NEWS_LOOKBACK_HOURS
+    limit = MAX_CANDIDATES_BACKFILL if backfill else MAX_CANDIDATES
+    since = (datetime.now(timezone.utc) - timedelta(hours=lookback_hours)).strftime("%Y-%m-%d %H:%M:%S")
     with get_conn() as conn:
         rows = [dict(r) for r in conn.execute(
             "SELECT rn.* FROM raw_news rn WHERE rn.market = ? AND rn.ticker = ? AND rn.fetched_at >= ?"
             " AND NOT EXISTS (SELECT 1 FROM seen_news s WHERE s.company_id = ? AND s.raw_news_id = rn.id)"
             " ORDER BY rn.published_at DESC LIMIT ?",
-            (company["market"], company["ticker"], since, company["id"], MAX_CANDIDATES),
+            (company["market"], company["ticker"], since, company["id"], limit),
         )]
     if not rows:
         return
 
+    today = now_local().date()
+    start = (now_local() - timedelta(hours=lookback_hours)).date()
     candidates = "\n\n".join(
-        f"[{i}] {r['title']}\n来源：{r['source']}　时间：{r['published_at'] or '未知'}\n{r['content'][:600]}"
+        f"[{i}] {r['title']}\n来源：{r['source']}　时间：{r['published_at'] or '未知'}\n"
+        f"{r['content'][:400 if backfill else 600]}"
         for i, r in enumerate(rows, 1)
     )
     market_name = {"A": "A股", "HK": "港股", "US": "美股"}[company["market"]]
     user_msg = (
         f"公司：{company['name']}（{market_name} {company['ticker']}）\n"
-        f"今天日期：{now_local():%Y-%m-%d}\n"
+        f"今天日期：{today}\n"
+        f"信息时间范围：{start} 至 {today}\n"
         f"用户的投资逻辑：{company['thesis'].strip() or '未提供'}\n\n"
         f"候选信息：\n{candidates}"
     )
     result = llm.chat_json(
         [{"role": "system", "content": ANALYSIS_SYSTEM}, {"role": "user", "content": user_msg}],
-        temperature=0.2, max_tokens=6000,
+        temperature=0.2, max_tokens=8000 if backfill else 6000,
     )
 
-    items = result.get("items") or []
-    today = now_local().strftime("%Y-%m-%d")
+    summaries = result.get("day_summaries") or {}
+    if not isinstance(summaries, dict):
+        summaries = {}
     with get_conn() as conn:
         conn.executemany("INSERT OR IGNORE INTO seen_news (company_id, raw_news_id) VALUES (?, ?)",
                          [(company["id"], r["id"]) for r in rows])
-        if not items:
-            return
-        conn.execute(
-            "INSERT INTO daily_reports (company_id, report_date, day_summary) VALUES (?, ?, ?)"
-            " ON CONFLICT (company_id, report_date) DO UPDATE SET"
-            " day_summary = CASE WHEN excluded.day_summary != '' THEN excluded.day_summary ELSE day_summary END",
-            (company["id"], today, result.get("day_summary") or ""),
-        )
-        report_id = conn.execute("SELECT id FROM daily_reports WHERE company_id = ? AND report_date = ?",
-                                 (company["id"], today)).fetchone()["id"]
-        for it in items:
+        for it in result.get("items") or []:
             # 来源链接只取自真实抓取的数据，不采信模型生成的 URL
-            srcs = [{"title": rows[i - 1]["title"], "url": rows[i - 1]["url"], "source": rows[i - 1]["source"],
-                     "published_at": rows[i - 1]["published_at"]}
-                    for i in it.get("source_ids") or [] if isinstance(i, int) and 1 <= i <= len(rows)]
-            if not srcs:  # 没有可追溯来源的结论不展示
+            picked = [rows[i - 1] for i in it.get("source_ids") or [] if isinstance(i, int) and 1 <= i <= len(rows)]
+            if not picked:  # 没有可追溯来源的结论不展示
                 continue
+            report_date = _item_date(picked, start, today)
+            report_id = _report_id(conn, company["id"], report_date, summaries.get(report_date) or "")
+            srcs = [{"title": r["title"], "url": r["url"], "source": r["source"], "published_at": r["published_at"]}
+                    for r in picked]
             conn.execute(
                 "INSERT INTO report_items (report_id, title, summary, direction, score, confidence, horizon,"
                 " frameworks_json, reasoning, watch_points, thesis_impact, thesis_broken, sources_json)"
@@ -130,6 +182,24 @@ def analyze_company(company: dict) -> None:
                  it.get("thesis_impact") or "", 1 if it.get("thesis_broken") else 0,
                  json.dumps(srcs, ensure_ascii=False)),
             )
+
+
+def _item_date(picked: list[dict], start, today) -> str:
+    """事件归档到其来源中最新的发布日期；解析不出或超出范围时归到今天。"""
+    dates = [t.date() for r in picked if (t := sources.parse_time(r["published_at"]))]
+    dates = [d for d in dates if start <= d <= today]
+    return str(max(dates) if dates else today)
+
+
+def _report_id(conn, company_id: int, report_date: str, day_summary: str) -> int:
+    conn.execute(
+        "INSERT INTO daily_reports (company_id, report_date, day_summary) VALUES (?, ?, ?)"
+        " ON CONFLICT (company_id, report_date) DO UPDATE SET"
+        " day_summary = CASE WHEN excluded.day_summary != '' THEN excluded.day_summary ELSE day_summary END",
+        (company_id, report_date, day_summary),
+    )
+    return conn.execute("SELECT id FROM daily_reports WHERE company_id = ? AND report_date = ?",
+                        (company_id, report_date)).fetchone()["id"]
 
 
 def _clamp(v, lo, hi) -> float:
