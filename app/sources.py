@@ -4,7 +4,8 @@ from datetime import datetime, timedelta
 
 import httpx
 
-from .config import BOCHA_API_KEY, FINNHUB_API_KEY, SEC_USER_AGENT
+from . import costs
+from .config import BOCHA_API_KEY, BOCHA_MODE, BOCHA_PRICE_PER_CALL, FINNHUB_API_KEY, SEC_USER_AGENT
 
 log = logging.getLogger(__name__)
 
@@ -52,6 +53,10 @@ def bocha_search(query: str, count: int = 10, freshness: str = "oneDay") -> list
     if not BOCHA_API_KEY:
         return []
     try:
+        costs.check_budget()
+    except costs.BudgetExceeded:
+        return []
+    try:
         resp = httpx.post(
             "https://api.bochaai.com/v1/web-search",
             headers={"Authorization": f"Bearer {BOCHA_API_KEY}"},
@@ -59,6 +64,7 @@ def bocha_search(query: str, count: int = 10, freshness: str = "oneDay") -> list
             timeout=30,
         )
         resp.raise_for_status()
+        costs.record("search", None, BOCHA_PRICE_PER_CALL)
         pages = (resp.json().get("data") or {}).get("webPages", {}).get("value", []) or []
     except Exception as e:
         log.warning("bocha search(%s) failed: %s", query, e)
@@ -145,17 +151,20 @@ def fetch_news(market: str, ticker: str, name: str, lookback_hours: int) -> list
     # 日常检索看一天；新增持仓回溯时放宽搜索范围、多取几条
     daily = lookback_hours <= 36
     freshness, count = ("oneDay", 10) if daily else ("oneWeek", 25)
-    items: list[dict] = []
+    recent = lambda rows: [i for i in rows if i["title"] and _is_recent(i["published_at"], since)]  # noqa: E731
+    # 先用免费数据源（A股 AKShare，美股 Finnhub + SEC）；港股没有免费源，总是用博查
     if market == "A":
-        items += akshare_stock_news(ticker)
-        items += bocha_search(f"{name} {ticker} 公告 最新消息", count, freshness)
-    elif market == "HK":
-        items += bocha_search(f"{name} {ticker}.HK 港股 公告 最新消息", count, freshness)
+        items = recent(akshare_stock_news(ticker))
+        query = f"{name} {ticker} 公告 最新消息"
     elif market == "US":
-        items += finnhub_company_news(ticker, since, 30 if daily else 60)
-        items += sec_filings(ticker, since)
-        items += bocha_search(f"{name} {ticker} 美股 最新消息", count, freshness)
-    return [i for i in items if i["title"] and _is_recent(i["published_at"], since)]
+        items = recent(finnhub_company_news(ticker, since, 30 if daily else 60) + sec_filings(ticker, since))
+        query = f"{name} {ticker} 美股 最新消息"
+    else:
+        items, query = [], f"{name} {ticker}.HK 港股 公告 最新消息"
+    # 博查按次收费，是主要成本：fallback 模式下只在免费源没抓到信息时补搜
+    if market == "HK" or BOCHA_MODE == "always" or not items:
+        items += recent(bocha_search(query, count, freshness))
+    return items
 
 
 def parse_time(published_at: str) -> datetime | None:

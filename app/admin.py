@@ -10,14 +10,16 @@ import httpx
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 
-from . import analyzer, digest
+from . import analyzer, costs, digest
 from .auth import admin_user, hash_pw
-from .config import ADMIN_USERNAMES, BACKFILL_DAYS, BOCHA_API_KEY, DEEPSEEK_API_KEY, TIMEZONE
+from .config import (ADMIN_USERNAMES, BACKFILL_DAYS, BOCHA_API_KEY, BOCHA_MODE, DAILY_BUDGET_YUAN, DEEPSEEK_API_KEY,
+                     INACTIVE_DAYS, TIMEZONE)
 from .db import get_conn
 
 router = APIRouter(prefix="/api/admin", dependencies=[Depends(admin_user)])
 
-TASKS = {"analyze": "信息分析打分", "digest": "今日概览", "socratic": "提问助手", "parse": "持仓识别", "other": "其他"}
+TASKS = {"analyze": "信息分析打分", "digest": "今日概览", "socratic": "提问助手", "parse": "持仓识别",
+         "search": "博查搜索", "other": "其他"}
 
 
 def _local(utc: str | None) -> str | None:
@@ -86,7 +88,10 @@ def overview():
             ["今日模型成本（估算）", f"¥{n('SELECT COALESCE(SUM(cost), 0) FROM llm_usage WHERE at >= ?', today):.2f}"],
             ["近 7 天成本（估算）", f"¥{n('SELECT COALESCE(SUM(cost), 0) FROM llm_usage WHERE at >= ?', week):.2f}"],
             ["用户总数", n("SELECT COUNT(*) FROM users")],
-            ["近 7 天活跃用户", n("SELECT COUNT(*) FROM users WHERE last_login_at >= ?", week)],
+            ["近 7 天活跃用户", n("SELECT COUNT(*) FROM users WHERE COALESCE(last_seen_at, last_login_at) >= ?", week)],
+            [f"暂停检索用户（{INACTIVE_DAYS} 天未访问）", n(
+                "SELECT COUNT(*) FROM users WHERE COALESCE(last_seen_at, last_login_at, created_at) < datetime('now', ?)",
+                f"-{INACTIVE_DAYS} day")],
             ["持仓条目 / 去重公司",
              f"{n('SELECT COUNT(*) FROM companies')} / {n('SELECT COUNT(DISTINCT market || ticker) FROM companies')}"],
             ["今日抓取新闻", n("SELECT COUNT(*) FROM raw_news WHERE fetched_at >= ?", today)],
@@ -103,7 +108,8 @@ def overview():
     for t in by_task:
         t["name"] = TASKS.get(t["task"], t["task"])
     return {"stats": stats, "by_task": by_task, "by_day": by_day, "balances": _balances(),
-            "queue": _queue_state()}
+            "queue": _queue_state(),
+            "budget": {"used": costs.today_cost(), "limit": DAILY_BUDGET_YUAN, "bocha_mode": BOCHA_MODE}}
 
 
 def _queue_state() -> dict:
@@ -120,14 +126,17 @@ def users():
     with get_conn() as conn:
         rows = [dict(r) for r in conn.execute(
             """SELECT u.id, u.username, u.role, u.banned, u.alert_threshold, u.created_at, u.last_login_at,
+                 COALESCE(u.last_seen_at, u.last_login_at, u.created_at) AS last_seen_at,
+                 COALESCE(u.last_seen_at, u.last_login_at, u.created_at) < datetime('now', ?) AS paused,
                  (SELECT COUNT(*) FROM companies c WHERE c.user_id = u.id) AS companies,
                  (SELECT COUNT(*) FROM chat_messages m JOIN companies c ON c.id = m.company_id
                    WHERE c.user_id = u.id AND m.role = 'user') AS questions,
                  (SELECT COALESCE(SUM(cost), 0) FROM llm_usage x WHERE x.user_id = u.id AND x.at >= ?) AS cost_30d,
                  (SELECT COALESCE(SUM(cost), 0) FROM llm_usage x WHERE x.user_id = u.id) AS cost_total
-               FROM users u ORDER BY u.id""", (month,))]
+               FROM users u ORDER BY u.id""", (f"-{INACTIVE_DAYS} day", month))]
     for r in rows:
         r["created_at"], r["last_login_at"] = _local(r["created_at"]), _local(r["last_login_at"])
+        r["last_seen_at"] = _local(r["last_seen_at"])
         r["pinned_admin"] = r["username"] in ADMIN_USERNAMES
     return rows
 

@@ -204,6 +204,9 @@ dialog h3 { margin-top: 0; }
 .warn-row td { background: var(--alert-bg); }
 .actions { display: flex; gap: 4px; flex-wrap: wrap; }
 button.danger { color: var(--bull); border-color: var(--bull); }
+.bar { height: 8px; background: var(--neutral-bg); border-radius: 4px; overflow: hidden; margin: 8px 0; }
+.bar i { display: block; height: 100%; background: var(--bear); }
+.bar i.warn { background: var(--bull); }
 .flash { position: sticky; top: 64px; z-index: 6; background: var(--bear-bg); color: var(--bear); padding: 8px 12px; border-radius: 8px; }
 .flash.error { background: var(--bull-bg); color: var(--bull); }
 @media (max-width: 760px) { .two-col { grid-template-columns: 1fr; } }

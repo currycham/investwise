@@ -339,7 +339,7 @@ async function sendChat(text, silent = false) {
     const r = await api(`/api/companies/${c.id}/chat`, { json: { message: text } });
     pending.classList.remove("pending");
     pending.textContent = r.reply;
-  } catch (e) { pending.textContent = `出错了：${e.message}`; }
+  } catch (e) { pending.textContent = e.message.includes("预算") ? e.message : `出错了：${e.message}`; }
   $("#chat-body").scrollTop = $("#chat-body").scrollHeight;
 }
 $("#chat-form").onsubmit = (e) => {

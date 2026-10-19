@@ -39,7 +39,15 @@ function queueLine(q) {
 // ---------- 概览 ----------
 async function viewOverview() {
   const d = await api("/api/admin/overview");
+  const b = d.budget;
+  const pct = b.limit > 0 ? Math.min(100, (b.used / b.limit) * 100) : 0;
   return `
+    <div class="card">
+      <div class="row-between"><b>今日预算使用</b><span class="num">${yuan(b.used)} / ${b.limit > 0 ? yuan(b.limit) : "不限"}</span></div>
+      <div class="bar"><i class="${pct >= 80 ? "warn" : ""}" style="width:${pct}%"></i></div>
+      <p class="muted small">含模型和博查，北京时间零点重置。用完后当天暂停检索、概览和提问，已有内容照常访问；没分析完的新闻明天接着处理。
+        上限在 .env 的 DAILY_BUDGET_YUAN 设置。博查模式：${b.bocha_mode === "always" ? "每家公司都搜" : "港股必搜，A股/美股仅在免费源没抓到时补搜"}。</p>
+    </div>
     <div class="card">
       <div class="row-between"><b>API 余额</b><span class="muted small">每 10 分钟最多查询一次</span></div>
       ${table(["服务", "用途", "余额", ""], d.balances.map((b) => `
@@ -63,7 +71,7 @@ async function viewOverview() {
 async function viewUsers() {
   const rows = await api("/api/admin/users");
   return `
-    ${table(["用户", "角色", "持仓", "提问", "近 30 天成本", "累计成本", "注册", "最近登录", "操作"], rows.map((u) => `
+    ${table(["用户", "角色", "持仓", "提问", "近 30 天成本", "累计成本", "注册", "最近访问", "操作"], rows.map((u) => `
       <tr class="${u.banned ? "dim" : ""}">
         <td><b>${esc(u.username)}</b> <span class="muted small">#${u.id}</span>${u.banned ? ' <span class="badge bear">已停用</span>' : ""}</td>
         <td>${u.role === "admin" ? `<span class="badge bull">管理员</span>${u.pinned_admin ? ' <span class="muted small" title="在 .env 的 ADMIN_USERNAMES 中">固定</span>' : ""}` : '<span class="muted">用户</span>'}</td>
@@ -72,7 +80,7 @@ async function viewUsers() {
         <td class="num">${yuan(u.cost_30d)}</td>
         <td class="num">${yuan(u.cost_total)}</td>
         <td class="num small">${esc(u.created_at)}</td>
-        <td class="num small">${esc(u.last_login_at || "")}</td>
+        <td class="num small">${esc(u.last_seen_at || "")}${u.paused ? '<br><span class="badge neutral" title="长期未访问，已暂停每日检索；再次访问时自动回溯">已暂停检索</span>' : ""}</td>
         <td class="actions">
           <button class="small" data-act="role" data-id="${u.id}" data-role="${u.role === "admin" ? "user" : "admin"}">${u.role === "admin" ? "取消管理员" : "设为管理员"}</button>
           <button class="small" data-act="reset" data-id="${u.id}" data-name="${esc(u.username)}">重置密码</button>

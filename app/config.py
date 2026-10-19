@@ -22,6 +22,15 @@ ADMIN_USERNAMES = [u.strip() for u in os.getenv("ADMIN_USERNAMES", "佳侣").spl
 DEEPSEEK_PRICE_INPUT = float(os.getenv("DEEPSEEK_PRICE_INPUT", "2"))
 DEEPSEEK_PRICE_CACHED = float(os.getenv("DEEPSEEK_PRICE_CACHED", "0.2"))
 DEEPSEEK_PRICE_OUTPUT = float(os.getenv("DEEPSEEK_PRICE_OUTPUT", "3"))
+BOCHA_PRICE_PER_CALL = float(os.getenv("BOCHA_PRICE_PER_CALL", "0.036"))  # 元/次
+
+# ---------- 成本控制 ----------
+# 博查用法：fallback = 港股总是用，A股/美股只在免费数据源当天没抓到信息时补搜；always = 每家公司都搜
+BOCHA_MODE = os.getenv("BOCHA_MODE", "fallback")
+# 超过这么多天没访问网站的用户，暂停每日检索；再次访问时自动回溯
+INACTIVE_DAYS = int(os.getenv("INACTIVE_DAYS", "14"))
+# 全站每日成本上限（元，含模型和博查，北京时间零点重置）；用完后当天暂停检索、概览和提问
+DAILY_BUDGET_YUAN = float(os.getenv("DAILY_BUDGET_YUAN", "10"))
 DAILY_RUN_TIME = os.getenv("DAILY_RUN_TIME", "07:30")
 TIMEZONE = "Asia/Shanghai"
 

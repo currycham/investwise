@@ -328,6 +328,8 @@ def chat(company_id: int, body: ChatIn, user: dict = Depends(current_user)):
                 {"role": "user", "content": body.message}]
     try:
         reply = llm.chat(messages, temperature=0.7, max_tokens=1200, task="socratic", user_id=user["id"])
+    except llm.BudgetError as e:
+        raise HTTPException(429, str(e))
     except llm.LLMError as e:
         raise HTTPException(502, str(e))
     with get_conn() as conn:

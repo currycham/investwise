@@ -144,6 +144,7 @@ MIGRATIONS = [
     ("users", "role", "TEXT NOT NULL DEFAULT 'user'"),
     ("users", "banned", "INTEGER NOT NULL DEFAULT 0"),
     ("users", "last_login_at", "TEXT"),
+    ("users", "last_seen_at", "TEXT"),
 ]
 
 

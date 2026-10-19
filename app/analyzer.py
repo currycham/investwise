@@ -10,8 +10,8 @@ import threading
 from datetime import datetime, timedelta, timezone
 from zoneinfo import ZoneInfo
 
-from . import digest, llm, sources
-from .config import BACKFILL_DAYS, NEWS_LOOKBACK_HOURS, TIMEZONE
+from . import costs, digest, llm, sources
+from .config import BACKFILL_DAYS, INACTIVE_DAYS, NEWS_LOOKBACK_HOURS, TIMEZONE
 from .db import get_conn
 from .prompts import ANALYSIS_SYSTEM
 
@@ -86,11 +86,15 @@ def run(user_id: int | None = None, company_ids: list[int] | None = None,
                   started_at=now_local().isoformat(timespec="seconds"), finished_at=None)
     job_id = None
     try:
-        sql, args = "SELECT * FROM companies WHERE 1 = 1", []
+        sql, args = "SELECT c.* FROM companies c JOIN users u ON u.id = c.user_id WHERE u.banned = 0", []
         if user_id:
-            sql, args = sql + " AND user_id = ?", args + [user_id]
+            sql, args = sql + " AND c.user_id = ?", args + [user_id]
+        elif not company_ids:
+            # 全站检索跳过长期不访问的用户；他们回来时会自动回溯
+            sql += " AND COALESCE(u.last_seen_at, u.last_login_at, u.created_at) >= datetime('now', ?)"
+            args.append(f"-{INACTIVE_DAYS} day")
         if company_ids:
-            sql += f" AND id IN ({','.join('?' * len(company_ids))})"
+            sql += f" AND c.id IN ({','.join('?' * len(company_ids))})"
             args += company_ids
         with get_conn() as conn:
             companies = [dict(r) for r in conn.execute(sql, args)]
@@ -99,6 +103,8 @@ def run(user_id: int | None = None, company_ids: list[int] | None = None,
 
         targets = {(c["market"], c["ticker"]): c["name"] for c in companies}
         for i, ((market, ticker), name) in enumerate(targets.items(), 1):
+            if _over_budget():
+                return
             status["progress"] = f"抓取 {i}/{len(targets)}"
             try:
                 _store_news(market, ticker, sources.fetch_news(market, ticker, name, lookback_hours))
@@ -107,9 +113,14 @@ def run(user_id: int | None = None, company_ids: list[int] | None = None,
                 status["errors"].append(f"{name} 抓取失败：{e}")
 
         for i, c in enumerate(companies, 1):
+            if _over_budget():
+                return
             status["progress"] = f"分析 {i}/{len(companies)}"
             try:
                 analyze_company(c, lookback_hours)
+            except llm.BudgetError:
+                _over_budget()
+                return
             except Exception as e:
                 log.exception("analyze failed")
                 status["errors"].append(f"{c['name']} 分析失败：{e}")
@@ -129,6 +140,17 @@ def run(user_id: int | None = None, company_ids: list[int] | None = None,
         status.update(running=False, finished_at=now_local().isoformat(timespec="seconds"))
         if job_id:
             _finish_job(job_id)
+
+
+def _over_budget() -> bool:
+    """预算用完时停止任务；没分析的新闻不会标记为已读，明天的检索会接着处理。"""
+    try:
+        costs.check_budget()
+        return False
+    except costs.BudgetExceeded as e:
+        status["errors"].append(str(e))
+        status["progress"] = "预算用完，已暂停"
+        return True
 
 
 def _finish_job(job_id: int) -> None:
