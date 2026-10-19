@@ -1,0 +1,135 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>InvestWise 投资助手</title>
+  <link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+
+<!-- 登录 -->
+<section id="auth" class="auth hidden">
+  <div class="auth-card">
+    <h1>InvestWise</h1>
+    <p class="muted">每日跟踪你的持仓公司，用问题帮你想清楚</p>
+    <input id="auth-user" placeholder="用户名" autocomplete="username">
+    <input id="auth-pass" type="password" placeholder="密码（至少6位）" autocomplete="current-password">
+    <input id="auth-invite" class="hidden" placeholder="邀请码">
+    <button id="auth-submit" class="primary">登录</button>
+    <a href="#" id="auth-toggle" class="muted small">没有账号？注册</a>
+    <p id="auth-error" class="error"></p>
+  </div>
+</section>
+
+<!-- 主界面 -->
+<main id="app" class="hidden">
+  <header class="topbar">
+    <div class="brand">InvestWise</div>
+    <div class="topbar-actions">
+      <span id="run-status" class="muted small"></span>
+      <button id="btn-run">立即检索</button>
+      <button id="btn-import" class="primary">导入公司</button>
+      <button id="btn-settings" class="ghost" title="设置">⚙</button>
+      <button id="btn-logout" class="ghost">退出</button>
+    </div>
+  </header>
+
+  <section id="alerts" class="alerts hidden">
+    <h2>⚠ 近7天预警</h2>
+    <div id="alerts-list"></div>
+  </section>
+
+  <section class="companies">
+    <div class="section-head">
+      <h2>我的持仓 <span id="company-count" class="muted"></span></h2>
+      <button id="btn-add" class="ghost">＋ 添加单个</button>
+    </div>
+    <div id="company-list"></div>
+    <p id="empty-hint" class="empty hidden">还没有公司。点击右上角「导入公司」，粘贴列表或上传 Excel。</p>
+  </section>
+
+  <p class="disclaimer">本工具仅做信息整理与思考辅助，AI 评分不构成投资建议。</p>
+</main>
+
+<!-- 导入 -->
+<dialog id="dlg-import">
+  <h3>导入公司</h3>
+  <div id="import-step1">
+    <p class="muted small">粘贴任意格式的列表（名称、代码均可，例如「茅台、腾讯 00700、AAPL」），或上传 Excel / CSV / TXT。</p>
+    <textarea id="import-text" rows="8" placeholder="贵州茅台 600519&#10;腾讯控股&#10;英伟达 NVDA"></textarea>
+    <input id="import-file" type="file" accept=".xlsx,.xlsm,.csv,.txt">
+    <div class="dlg-actions">
+      <button data-close>取消</button>
+      <button id="import-parse" class="primary">识别</button>
+    </div>
+  </div>
+  <div id="import-step2" class="hidden">
+    <p class="muted small">请核对识别结果，可直接修改，取消勾选则不导入。</p>
+    <table class="preview">
+      <thead><tr><th></th><th>名称</th><th>代码</th><th>市场</th><th>备注</th></tr></thead>
+      <tbody id="import-preview"></tbody>
+    </table>
+    <div id="import-uncertain" class="warn small"></div>
+    <div class="dlg-actions">
+      <button id="import-back">返回</button>
+      <button id="import-confirm" class="primary">确认导入</button>
+    </div>
+  </div>
+  <p id="import-error" class="error"></p>
+</dialog>
+
+<!-- 添加/编辑 -->
+<dialog id="dlg-company">
+  <h3 id="company-dlg-title">添加公司</h3>
+  <label>名称<input id="cf-name"></label>
+  <label>代码<input id="cf-ticker" placeholder="600519 / 00700 / AAPL"></label>
+  <label>市场
+    <select id="cf-market">
+      <option value="">自动识别</option><option value="A">A股</option>
+      <option value="HK">港股</option><option value="US">美股</option>
+    </select>
+  </label>
+  <label>我的投资逻辑（可选，强烈建议填写）
+    <textarea id="cf-thesis" rows="4" placeholder="我为什么买它？例如：白酒龙头，品牌护城河 + 提价能力，自由现金流稳定，估值回到25倍以下有安全边际。&#10;AI 会判断每天的新信息是加强还是削弱这条逻辑。"></textarea>
+  </label>
+  <p class="muted small" id="cf-replace-hint"></p>
+  <div class="dlg-actions">
+    <button data-close>取消</button>
+    <button id="cf-save" class="primary">保存</button>
+  </div>
+  <p id="cf-error" class="error"></p>
+</dialog>
+
+<!-- 设置 -->
+<dialog id="dlg-settings">
+  <h3>预警设置</h3>
+  <label>预警阈值：|评分| ≥ <b id="th-val"></b>
+    <input id="th-range" type="range" min="1" max="10" step="1">
+  </label>
+  <p class="muted small">评分范围 -10 ~ +10。±6 以上表示实质性改变盈利预期或竞争格局。置信度低于 0.6 的信息不预警；被判定为"证伪你的投资逻辑"的信息总会预警。</p>
+  <div class="dlg-actions">
+    <button data-close>取消</button>
+    <button id="th-save" class="primary">保存</button>
+  </div>
+</dialog>
+
+<!-- 提问助手 -->
+<aside id="chat" class="chat hidden">
+  <div class="chat-head">
+    <div><b id="chat-title"></b><div class="muted small">我不给答案，我帮你提问题</div></div>
+    <div>
+      <button id="chat-reset" class="ghost small" title="重新开始">↺</button>
+      <button id="chat-close" class="ghost">✕</button>
+    </div>
+  </div>
+  <div id="chat-body" class="chat-body"></div>
+  <form id="chat-form" class="chat-form">
+    <textarea id="chat-input" rows="2" placeholder="回答问题，或说说你的想法…（Enter 发送，Shift+Enter 换行）"></textarea>
+    <button class="primary">发送</button>
+  </form>
+</aside>
+
+<script src="/static/app.js"></script>
+</body>
+</html>

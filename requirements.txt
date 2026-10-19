@@ -1,0 +1,9 @@
+fastapi>=0.115
+uvicorn>=0.30
+httpx[socks]>=0.27
+python-dotenv>=1.0
+python-multipart>=0.0.9
+openpyxl>=3.1
+apscheduler>=3.10,<4
+# A股/港股新闻（可选，装不上也能运行，只是少一个数据源）
+akshare>=1.14

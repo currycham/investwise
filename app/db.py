@@ -1,0 +1,118 @@
+import sqlite3
+from contextlib import contextmanager
+
+from .config import DB_PATH, DEFAULT_ALERT_THRESHOLD
+
+SCHEMA = f"""
+CREATE TABLE IF NOT EXISTS users (
+    id INTEGER PRIMARY KEY,
+    username TEXT UNIQUE NOT NULL,
+    pw_hash TEXT NOT NULL,
+    alert_threshold INTEGER NOT NULL DEFAULT {DEFAULT_ALERT_THRESHOLD},
+    created_at TEXT DEFAULT CURRENT_TIMESTAMP
+);
+CREATE TABLE IF NOT EXISTS sessions (
+    token TEXT PRIMARY KEY,
+    user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    created_at TEXT DEFAULT CURRENT_TIMESTAMP
+);
+CREATE TABLE IF NOT EXISTS companies (
+    id INTEGER PRIMARY KEY,
+    user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    name TEXT NOT NULL,
+    ticker TEXT NOT NULL,
+    market TEXT NOT NULL CHECK (market IN ('A', 'HK', 'US')),
+    thesis TEXT DEFAULT '',
+    created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE (user_id, market, ticker)
+);
+-- 原始新闻按 (市场, 代码) 共享，多个用户持有同一公司只抓取一次
+CREATE TABLE IF NOT EXISTS raw_news (
+    id INTEGER PRIMARY KEY,
+    market TEXT NOT NULL,
+    ticker TEXT NOT NULL,
+    title TEXT NOT NULL,
+    content TEXT DEFAULT '',
+    url TEXT DEFAULT '',
+    source TEXT DEFAULT '',
+    published_at TEXT DEFAULT '',
+    fetched_at TEXT DEFAULT CURRENT_TIMESTAMP,
+    uniq TEXT UNIQUE NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_raw_news_ticker ON raw_news (market, ticker, fetched_at);
+-- 某公司已经分析过的原始新闻，避免重复分析
+CREATE TABLE IF NOT EXISTS seen_news (
+    company_id INTEGER NOT NULL REFERENCES companies(id) ON DELETE CASCADE,
+    raw_news_id INTEGER NOT NULL REFERENCES raw_news(id) ON DELETE CASCADE,
+    PRIMARY KEY (company_id, raw_news_id)
+);
+CREATE TABLE IF NOT EXISTS daily_reports (
+    id INTEGER PRIMARY KEY,
+    company_id INTEGER NOT NULL REFERENCES companies(id) ON DELETE CASCADE,
+    report_date TEXT NOT NULL,
+    day_summary TEXT DEFAULT '',
+    created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE (company_id, report_date)
+);
+CREATE TABLE IF NOT EXISTS report_items (
+    id INTEGER PRIMARY KEY,
+    report_id INTEGER NOT NULL REFERENCES daily_reports(id) ON DELETE CASCADE,
+    title TEXT NOT NULL,
+    summary TEXT DEFAULT '',
+    direction TEXT DEFAULT '中性',
+    score REAL DEFAULT 0,
+    confidence REAL DEFAULT 0,
+    horizon TEXT DEFAULT '',
+    frameworks_json TEXT DEFAULT '{{}}',
+    reasoning TEXT DEFAULT '',
+    watch_points TEXT DEFAULT '',
+    thesis_impact TEXT DEFAULT '',
+    thesis_broken INTEGER DEFAULT 0,
+    sources_json TEXT DEFAULT '[]',
+    created_at TEXT DEFAULT CURRENT_TIMESTAMP
+);
+CREATE TABLE IF NOT EXISTS chat_messages (
+    id INTEGER PRIMARY KEY,
+    company_id INTEGER NOT NULL REFERENCES companies(id) ON DELETE CASCADE,
+    role TEXT NOT NULL CHECK (role IN ('user', 'assistant')),
+    content TEXT NOT NULL,
+    created_at TEXT DEFAULT CURRENT_TIMESTAMP
+);
+"""
+
+
+def _connect() -> sqlite3.Connection:
+    DB_PATH.parent.mkdir(parents=True, exist_ok=True)
+    conn = sqlite3.connect(DB_PATH, timeout=30)
+    conn.row_factory = sqlite3.Row
+    conn.execute("PRAGMA foreign_keys = ON")
+    conn.execute("PRAGMA journal_mode = WAL")
+    return conn
+
+
+@contextmanager
+def get_conn():
+    conn = _connect()
+    try:
+        yield conn
+        conn.commit()
+    except Exception:
+        conn.rollback()
+        raise
+    finally:
+        conn.close()
+
+
+def init_db() -> None:
+    with get_conn() as conn:
+        conn.executescript(SCHEMA)
+
+
+def alert_condition(threshold_sql: str = "u.alert_threshold") -> str:
+    """预警判定放在查询时计算，这样用户调整阈值后历史信息也会重新判定。"""
+    from .config import ALERT_MIN_CONFIDENCE
+
+    return (
+        f"((ABS(ri.score) >= {threshold_sql} AND ri.confidence >= {ALERT_MIN_CONFIDENCE})"
+        f" OR ri.thesis_broken = 1)"
+    )
