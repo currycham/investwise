@@ -107,6 +107,30 @@ CREATE TABLE IF NOT EXISTS jobs (
     started_at TEXT DEFAULT CURRENT_TIMESTAMP,
     finished_at TEXT
 );
+-- 「先判断，再看 AI」：用户对每条信息自己的判断（每条信息只属于一个用户）
+CREATE TABLE IF NOT EXISTS item_judgments (
+    item_id INTEGER PRIMARY KEY REFERENCES report_items(id) ON DELETE CASCADE,
+    user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    verdict TEXT NOT NULL CHECK (verdict IN ('利好', '利空', '中性')),
+    created_at TEXT DEFAULT CURRENT_TIMESTAMP
+);
+-- 决策日志：买卖或不动的理由、情绪、把握，到期提醒复盘
+CREATE TABLE IF NOT EXISTS decisions (
+    id INTEGER PRIMARY KEY,
+    user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    company_id INTEGER NOT NULL REFERENCES companies(id) ON DELETE CASCADE,
+    action TEXT NOT NULL,
+    reason TEXT NOT NULL,
+    emotion TEXT DEFAULT '',
+    confidence INTEGER DEFAULT 3,
+    price TEXT DEFAULT '',
+    decided_on TEXT NOT NULL,
+    review_on TEXT NOT NULL,
+    review_note TEXT DEFAULT '',
+    reviewed_at TEXT,
+    created_at TEXT DEFAULT CURRENT_TIMESTAMP
+);
+CREATE INDEX IF NOT EXISTS idx_decisions_user ON decisions (user_id, review_on);
 CREATE TABLE IF NOT EXISTS chat_messages (
     id INTEGER PRIMARY KEY,
     company_id INTEGER NOT NULL REFERENCES companies(id) ON DELETE CASCADE,
@@ -148,6 +172,12 @@ MIGRATIONS = [
     ("users", "email", "TEXT NOT NULL DEFAULT ''"),
     ("users", "email_alerts", "INTEGER NOT NULL DEFAULT 1"),
     ("report_items", "notified_at", "TEXT"),  # 预警邮件已发送时间
+    # 结构化投资逻辑：thesis 为"为什么买"，另加关键假设、证伪条件、计划持有期
+    ("companies", "assumptions", "TEXT NOT NULL DEFAULT ''"),
+    ("companies", "wrong_if", "TEXT NOT NULL DEFAULT ''"),
+    ("companies", "horizon", "TEXT NOT NULL DEFAULT ''"),
+    ("report_items", "thesis_note", "TEXT NOT NULL DEFAULT ''"),  # 触及了哪条假设 / 证伪条件
+    ("users", "judge_first_at", "TEXT"),  # 开启「先判断，再看 AI」的时间，之后入库的信息先隐藏 AI 判断
 ]
 
 
@@ -173,3 +203,16 @@ def alert_condition(threshold_sql: str = "u.alert_threshold") -> str:
         f"((ABS(ri.score) >= {threshold_sql} AND ri.confidence >= {ALERT_MIN_CONFIDENCE})"
         f" OR ri.thesis_broken = 1)"
     )
+
+
+def needs_judgment(user_alias: str = "u") -> str:
+    """开启「先判断，再看 AI」之后入库、用户还没判断过的信息。"""
+    return (f"({user_alias}.judge_first_at IS NOT NULL AND ri.created_at > {user_alias}.judge_first_at"
+            " AND NOT EXISTS (SELECT 1 FROM item_judgments j WHERE j.item_id = ri.id))")
+
+
+def thesis_text(c) -> str:
+    """把结构化投资逻辑拼成给模型看的文本；什么都没写时返回空串。"""
+    parts = [("为什么买", c["thesis"]), ("关键假设", c["assumptions"]),
+             ("什么情况说明我错了", c["wrong_if"]), ("计划持有", c["horizon"])]
+    return "\n".join(f"{k}：{v.strip()}" for k, v in parts if (v or "").strip())

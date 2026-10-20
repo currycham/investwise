@@ -43,6 +43,7 @@
       <button id="btn-run">立即检索</button>
       <button id="btn-import" class="primary">导入公司</button>
       <a id="btn-admin" href="/admin" class="hidden small">后台</a>
+      <button id="btn-thinking" class="ghost">我的思考</button>
       <button id="btn-guide" class="ghost">使用说明</button>
       <button id="btn-settings" class="ghost" title="设置">⚙</button>
       <button id="btn-logout" class="ghost">退出</button>
@@ -62,6 +63,8 @@
     <div class="guide-close"><button id="guide-close" class="ghost small">收起说明 ✕</button></div>
     <div class="guide-slot"></div>
   </section>
+
+  <section id="reviews" class="reviews hidden"></section>
 
   <section id="digest" class="digest hidden"></section>
 
@@ -94,11 +97,13 @@
   <h2 class="guide-h">怎么用</h2>
   <ol class="guide-steps">
     <li><b>导入持仓。</b>点「导入公司」，粘贴任意格式的列表（如「茅台、腾讯 00700、AAPL」）或上传 Excel，AI 识别后你核对一遍即可。支持 A股、港股、美股。</li>
-    <li><b>写下你的投资逻辑（最重要的一步）。</b>点公司旁的「编辑」，用两三句话写清楚为什么买它、什么情况下你会卖。例如：
-      <blockquote>白酒龙头，品牌护城河 + 提价能力，自由现金流稳定。如果批价持续跌破出厂价、或渠道库存连续两个季度上升，说明提价能力在减弱，考虑减仓。</blockquote>
-      写得越具体，AI 越能判断新信息和你的逻辑是什么关系；写不出来，本身就是一个值得注意的信号。</li>
+    <li><b>写下你的投资逻辑（最重要的一步）。</b>点公司旁的「编辑」，分四项写：为什么买、关键假设、什么情况说明我错了、打算拿多久。例如：
+      <blockquote>为什么买：白酒龙头，品牌护城河 + 提价能力。<br>关键假设：批价稳定在出厂价之上；渠道库存不持续上升。<br>什么情况说明我错了：批价连续 3 个月跌破出厂价。</blockquote>
+      写得越具体，AI 越能判断新信息碰到了哪条假设；写不出来，本身就是一个值得注意的信号。写完可以点「投资逻辑体检」，让 AI 挑毛病（它只提问，不替你写）。</li>
     <li><b>每天早上看一眼。</b>页面最上方是「今日概览」：今天哪些公司有变化、整体偏利好还是利空，以及几个组合层面值得想一想的问题。重大信息会出现在「预警」里高亮，也可以在 ⚙ 设置里填邮箱，有预警时发邮件给你。</li>
     <li><b>和提问助手聊一聊。</b>点公司的「💬 提问我」，它会结合最近的信息和你的投资逻辑向你提问。试着认真回答，你会发现自己真正理解和还没理解的地方。</li>
+    <li><b>先判断，再看 AI（推荐开启）。</b>在 ⚙ 设置里打开后，新信息先只显示事实和来源，你选了利好、利空或中性，才揭晓 AI 的评分和推理。「我的思考」会统计你和 AI 的判断差异，看看自己是否习惯性偏乐观，或者在回避坏消息。</li>
+    <li><b>记录决策，到期复盘。</b>买入、卖出，或者决定不动的时候，点「📝 记录决策」，花 30 秒写下理由、情绪和把握。到期后页面顶部会提醒你复盘：当时的理由后来哪些对了、哪些错了，结果是判断对了还是运气。</li>
   </ol>
 
   <h2 class="guide-h">怎么读懂评分</h2>
@@ -109,6 +114,39 @@
     <div class="guide-card"><b>它不做什么</b><p>不给买卖建议，不预测股价，不推荐股票。AI 也会出错，每条结论都附原始来源链接，请以原文为准。</p></div>
   </div>
 </template>
+
+<!-- 记录决策 -->
+<dialog id="dlg-decision">
+  <h3>记录一次决策：<span id="dc-company"></span></h3>
+  <p class="muted small">30 秒写下此刻的想法。到期后会提醒你复盘：当时的理由，后来哪些对了、哪些错了。不操作也是一种决策。</p>
+  <div class="chips" id="dc-action"></div>
+  <label>为什么现在做这个决定？依据是什么？
+    <textarea id="dc-reason" rows="4" placeholder="例如：一季报批价企稳、渠道库存下降，关键假设 1、2 都在加强；股价回调到 22 倍，在我的估值区间内。"></textarea>
+  </label>
+  <label>此刻的情绪</label>
+  <div class="chips" id="dc-emotion"></div>
+  <label>把握程度：<b id="dc-conf-val">3</b> / 5
+    <input id="dc-conf" type="range" min="1" max="5" step="1" value="3">
+  </label>
+  <div class="two-col">
+    <label>价格（可选）<input id="dc-price" placeholder="例如 1520"></label>
+    <label>多久后复盘
+      <select id="dc-review"><option value="30">1 个月</option><option value="90" selected>3 个月</option>
+        <option value="180">6 个月</option><option value="365">1 年</option></select>
+    </label>
+  </div>
+  <p id="dc-error" class="error"></p>
+  <div class="dlg-actions">
+    <button data-close>取消</button>
+    <button id="dc-save" class="primary">记录</button>
+  </div>
+</dialog>
+
+<!-- 我的思考 -->
+<dialog id="dlg-thinking" class="wide">
+  <div class="row-between"><h3>我的思考</h3><button data-close class="ghost">✕</button></div>
+  <div id="thinking-body"><span class="muted">加载中…</span></div>
+</dialog>
 
 <!-- 导入 -->
 <dialog id="dlg-import">
@@ -148,9 +186,28 @@
       <option value="HK">港股</option><option value="US">美股</option>
     </select>
   </label>
-  <label>我的投资逻辑（可选，强烈建议填写）
-    <textarea id="cf-thesis" rows="4" placeholder="我为什么买它？例如：白酒龙头，品牌护城河 + 提价能力，自由现金流稳定，估值回到25倍以下有安全边际。&#10;AI 会判断每天的新信息是加强还是削弱这条逻辑。"></textarea>
-  </label>
+  <fieldset class="thesis-form">
+    <legend>我的投资逻辑 <span class="muted small">可选，强烈建议填写。AI 会拿每天的新信息逐条对照</span></legend>
+    <label>为什么买
+      <textarea id="cf-thesis" rows="2" placeholder="例如：白酒龙头，品牌护城河 + 提价能力，自由现金流稳定。"></textarea>
+    </label>
+    <label>关键假设：这个逻辑成立需要哪些前提？
+      <textarea id="cf-assumptions" rows="3" placeholder="每行一条，尽量写成可以观察、可以验证的事实。例如：&#10;1. 批价稳定在出厂价之上&#10;2. 渠道库存不持续上升&#10;3. 估值不高于 25 倍市盈率"></textarea>
+    </label>
+    <label>什么情况说明我错了？
+      <textarea id="cf-wrongif" rows="2" placeholder="例如：批价连续 3 个月跌破出厂价；或渠道库存连续两个季度上升。出现这些情况时会直接预警。"></textarea>
+    </label>
+    <label>计划持有多久
+      <select id="cf-horizon">
+        <option value="">没想好</option><option>半年以内</option><option>1~3 年</option><option>3 年以上</option>
+      </select>
+    </label>
+    <div class="row-between">
+      <span class="muted small">不知道写得好不好？让 AI 挑挑毛病，它只提问题，不替你写。</span>
+      <button id="cf-review" class="small">投资逻辑体检</button>
+    </div>
+    <div id="cf-review-out" class="review-out hidden"></div>
+  </fieldset>
   <p class="muted small" id="cf-replace-hint"></p>
   <div class="dlg-actions">
     <button data-close>取消</button>
@@ -161,11 +218,14 @@
 
 <!-- 设置 -->
 <dialog id="dlg-settings">
-  <h3>预警设置</h3>
+  <h3>设置</h3>
   <label>预警阈值：|评分| ≥ <b id="th-val"></b>
     <input id="th-range" type="range" min="1" max="10" step="1">
   </label>
   <p class="muted small">评分范围 -10 ~ +10。±6 以上表示实质性改变盈利预期或竞争格局。置信度低于 0.6 的信息不预警；被判定为"证伪你的投资逻辑"的信息总会预警。</p>
+  <h3>先判断，再看 AI</h3>
+  <label class="check"><input id="jf-on" type="checkbox"> 新信息先隐藏 AI 的判断，我先给出自己的判断</label>
+  <p class="muted small">开启后，新入库的信息只显示事实和来源。你选择利好、利空或中性之后，再揭晓 AI 的评分和推理。「我的思考」里会统计你和 AI 的判断差异，帮你发现自己的盲点。</p>
   <h3>邮件预警</h3>
   <label>邮箱
     <input id="em-addr" type="email" placeholder="you@example.com" autocomplete="email">

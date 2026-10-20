@@ -9,7 +9,7 @@ from zoneinfo import ZoneInfo
 
 from . import llm
 from .config import TIMEZONE
-from .db import alert_condition, get_conn
+from .db import alert_condition, get_conn, thesis_text
 from .prompts import DIGEST_SYSTEM
 
 log = logging.getLogger(__name__)
@@ -100,7 +100,7 @@ def _write(user_id: int, companies: list[dict], rows: list[dict], by_company: di
         blocks.append(
             f"### company_id={r['company_id']} {c['name']}（{MARKET[c['market']]} {c['ticker']}）"
             f" 净倾向 {r['stance']} {r['score']:+.1f}；对投资逻辑的影响：{r['thesis_effect'] or '无'}\n"
-            f"用户的投资逻辑：{c['thesis'] or '未提供'}\n{lines}")
+            f"用户的投资逻辑：{thesis_text(c) or '未提供'}\n{lines}")
     user_msg = (f"用户共持有 {len(companies)} 家公司。\n"
                 f"今天有新信息的公司：\n\n" + "\n\n".join(blocks) +
                 f"\n\n今天没有重要信息的公司：{'、'.join(quiet) or '无'}")

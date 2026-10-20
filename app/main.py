@@ -9,10 +9,10 @@ from fastapi.responses import FileResponse, PlainTextResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
-from . import admin, analyzer, digest, llm, notify, parser
+from . import admin, analyzer, digest, llm, notify, parser, thinking
 from .auth import current_user, hash_pw, login_session, user_from_session, verify_pw
 from .config import ADMIN_USERNAMES, BASE_DIR, DAILY_RUN_TIME, INVITE_CODE, TIMEZONE
-from .db import alert_condition, get_conn, init_db
+from .db import alert_condition, get_conn, init_db, needs_judgment, thesis_text
 from .prompts import SOCRATIC_SYSTEM
 
 logging.basicConfig(level=logging.INFO)
@@ -32,6 +32,7 @@ async def lifespan(_app):
 
 app = FastAPI(title="InvestWise", lifespan=lifespan)
 app.include_router(admin.router)
+app.include_router(thinking.router)
 
 
 # ---------- 认证 ----------
@@ -42,9 +43,14 @@ class Credentials(BaseModel):
     invite_code: str = ""
 
 
+@app.get("/api/public-config")
+def public_config():
+    return {"invite_required": bool(INVITE_CODE)}
+
+
 @app.post("/api/register")
 def register(body: Credentials, response: Response):
-    if body.invite_code != INVITE_CODE:
+    if INVITE_CODE and body.invite_code.strip() != INVITE_CODE:
         raise HTTPException(403, "邀请码错误")
     with get_conn() as conn:
         if conn.execute("SELECT 1 FROM users WHERE username = ?", (body.username,)).fetchone():
@@ -80,20 +86,24 @@ def logout(response: Response, session: str | None = Cookie(default=None)):
 @app.get("/api/me")
 def me(user: dict = Depends(current_user)):
     return {"username": user["username"], "alert_threshold": user["alert_threshold"], "is_admin": user["role"] == "admin",
-            "email": user["email"], "email_alerts": bool(user["email_alerts"]), "email_enabled": notify.enabled()}
+            "email": user["email"], "email_alerts": bool(user["email_alerts"]), "email_enabled": notify.enabled(),
+            "judge_first": user["judge_first_at"] is not None}
 
 
 class Settings(BaseModel):
     alert_threshold: int = Field(ge=1, le=10)
     email: str = Field(default="", max_length=200, pattern=EMAIL_RE)
     email_alerts: bool = True
+    judge_first: bool = False
 
 
 @app.put("/api/settings")
 def update_settings(body: Settings, user: dict = Depends(current_user)):
     with get_conn() as conn:
-        conn.execute("UPDATE users SET alert_threshold = ?, email = ?, email_alerts = ? WHERE id = ?",
-                     (body.alert_threshold, body.email.strip(), int(body.email_alerts), user["id"]))
+        conn.execute(
+            "UPDATE users SET alert_threshold = ?, email = ?, email_alerts = ?,"
+            " judge_first_at = CASE WHEN ? THEN COALESCE(judge_first_at, CURRENT_TIMESTAMP) END WHERE id = ?",
+            (body.alert_threshold, body.email.strip(), int(body.email_alerts), int(body.judge_first), user["id"]))
     return {"ok": True}
 
 
@@ -124,7 +134,13 @@ class CompanyIn(BaseModel):
     name: str = Field(min_length=1, max_length=64)
     ticker: str = Field(min_length=1, max_length=16)
     market: str | None = None
-    thesis: str = Field(default="", max_length=2000)
+    thesis: str = Field(default="", max_length=2000)       # 为什么买
+    assumptions: str = Field(default="", max_length=2000)  # 关键假设
+    wrong_if: str = Field(default="", max_length=2000)     # 什么情况说明我错了
+    horizon: str = Field(default="", max_length=32)        # 计划持有
+
+    def thesis_values(self) -> tuple[str, str, str, str]:
+        return self.thesis.strip(), self.assumptions.strip(), self.wrong_if.strip(), self.horizon.strip()
 
 
 def _own_company(conn, company_id: int, user_id: int) -> dict:
@@ -150,7 +166,11 @@ def list_companies(user: dict = Depends(current_user)):
                   (SELECT COUNT(*) FROM report_items ri JOIN daily_reports dr ON dr.id = ri.report_id
                     JOIN users u ON u.id = c.user_id
                     WHERE dr.company_id = c.id AND dr.report_date >= date('now', '-7 day')
-                      AND {alert_condition()}) AS alerts_7d
+                      AND {alert_condition()}) AS alerts_7d,
+                  (SELECT COUNT(*) FROM report_items ri JOIN daily_reports dr ON dr.id = ri.report_id
+                    JOIN users u ON u.id = c.user_id
+                    WHERE dr.company_id = c.id AND {needs_judgment()}) AS pending_judgments,
+                  (SELECT COUNT(*) FROM decisions d WHERE d.company_id = c.id) AS decisions
                 FROM companies c WHERE c.user_id = ?
                 ORDER BY alerts_7d DESC, last_report DESC, c.created_at""",
             (user["id"],),
@@ -163,8 +183,9 @@ def add_company(body: CompanyIn, user: dict = Depends(current_user)):
     market, ticker = _normalized(body)
     with get_conn() as conn:
         cur = conn.execute(
-            "INSERT OR IGNORE INTO companies (user_id, name, ticker, market, thesis) VALUES (?, ?, ?, ?, ?)",
-            (user["id"], body.name.strip(), ticker, market, body.thesis.strip()),
+            "INSERT OR IGNORE INTO companies (user_id, name, ticker, market, thesis, assumptions, wrong_if, horizon)"
+            " VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+            (user["id"], body.name.strip(), ticker, market, *body.thesis_values()),
         )
         if not cur.rowcount:
             raise HTTPException(409, "已在列表中")
@@ -179,8 +200,9 @@ def update_company(company_id: int, body: CompanyIn, user: dict = Depends(curren
         old = _own_company(conn, company_id, user["id"])
         replaced = (old["market"], old["ticker"]) != (market, ticker)
         try:
-            conn.execute("UPDATE companies SET name = ?, ticker = ?, market = ?, thesis = ? WHERE id = ?",
-                         (body.name.strip(), ticker, market, body.thesis.strip(), company_id))
+            conn.execute("UPDATE companies SET name = ?, ticker = ?, market = ?, thesis = ?, assumptions = ?,"
+                         " wrong_if = ?, horizon = ? WHERE id = ?",
+                         (body.name.strip(), ticker, market, *body.thesis_values(), company_id))
         except Exception:
             raise HTTPException(409, "该公司已在列表中")
         if replaced:  # 换成了另一家公司，清空旧公司的历史
@@ -227,8 +249,9 @@ def import_confirm(body: ImportConfirm, user: dict = Depends(current_user)):
             if not norm:
                 continue
             cur = conn.execute(
-                "INSERT OR IGNORE INTO companies (user_id, name, ticker, market, thesis) VALUES (?, ?, ?, ?, ?)",
-                (user["id"], c.name.strip(), norm[1], norm[0], c.thesis.strip()),
+                "INSERT OR IGNORE INTO companies (user_id, name, ticker, market, thesis, assumptions, wrong_if, horizon)"
+                " VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+                (user["id"], c.name.strip(), norm[1], norm[0], *c.thesis_values()),
             )
             if cur.rowcount:
                 added.append(cur.lastrowid)
@@ -244,6 +267,10 @@ def _item_out(r) -> dict:
     d["sources"] = json.loads(d.pop("sources_json") or "[]")
     d["watch_points"] = json.loads(d["watch_points"] or "[]")
     d["is_alert"] = bool(d.get("is_alert"))
+    d["needs_judgment"] = bool(d.get("needs_judgment"))
+    if d["needs_judgment"]:  # 先判断，再看 AI：用户判断之前不下发 AI 的结论
+        d.update(direction="", score=0, confidence=0, horizon="", frameworks={}, reasoning="", watch_points=[],
+                 thesis_impact="", thesis_note="", thesis_broken=0)
     return d
 
 
@@ -257,9 +284,11 @@ def timeline(company_id: int, days: int = 90, user: dict = Depends(current_user)
         out = []
         for rep in reports:
             items = conn.execute(
-                f"SELECT ri.*, {alert_condition('?')} AS is_alert FROM report_items ri"
+                f"SELECT ri.*, {alert_condition()} AS is_alert, {needs_judgment()} AS needs_judgment,"
+                " j.verdict AS my_verdict FROM report_items ri JOIN users u ON u.id = ?"
+                " LEFT JOIN item_judgments j ON j.item_id = ri.id"
                 " WHERE ri.report_id = ? ORDER BY ABS(ri.score) DESC",
-                (user["alert_threshold"], rep["id"])).fetchall()
+                (user["id"], rep["id"])).fetchall()
             out.append({"date": rep["report_date"], "day_summary": rep["day_summary"],
                         "items": [_item_out(i) for i in items]})
     return out
@@ -270,7 +299,8 @@ def alerts(days: int = 7, user: dict = Depends(current_user)):
     with get_conn() as conn:
         rows = conn.execute(
             f"""SELECT ri.*, 1 AS is_alert, dr.report_date, c.id AS company_id, c.name AS company_name,
-                       c.ticker, c.market
+                       c.ticker, c.market, {needs_judgment()} AS needs_judgment,
+                       (SELECT verdict FROM item_judgments j WHERE j.item_id = ri.id) AS my_verdict
                 FROM report_items ri
                 JOIN daily_reports dr ON dr.id = ri.report_id
                 JOIN companies c ON c.id = dr.company_id
@@ -330,7 +360,7 @@ def _chat_context(conn, company: dict) -> str:
                      for i in items) or "（近30天无重要信息）"
     market = {"A": "A股", "HK": "港股", "US": "美股"}[company["market"]]
     return (f"## 讨论对象\n{company['name']}（{market} {company['ticker']}）\n\n"
-            f"## 用户写下的投资逻辑\n{company['thesis'] or '（用户还没写，这本身就值得追问）'}\n\n"
+            f"## 用户写下的投资逻辑\n{thesis_text(company) or '（用户还没写，这本身就值得追问）'}\n\n"
             f"## 最近信息\n{news}")
 
 

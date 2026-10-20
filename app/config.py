@@ -14,7 +14,8 @@ BOCHA_API_KEY = os.getenv("BOCHA_API_KEY", "")
 FINNHUB_API_KEY = os.getenv("FINNHUB_API_KEY", "")
 SEC_USER_AGENT = os.getenv("SEC_USER_AGENT", "InvestWise admin@example.com")
 
-INVITE_CODE = os.getenv("INVITE_CODE", "change-me")
+# 注册邀请码；留空表示开放注册（内测期间）
+INVITE_CODE = os.getenv("INVITE_CODE", "").strip()
 # 这些用户名注册或启动时自动成为管理员（逗号分隔）；其他管理员可在后台设置
 ADMIN_USERNAMES = [u.strip() for u in os.getenv("ADMIN_USERNAMES", "").split(",") if u.strip()]
 

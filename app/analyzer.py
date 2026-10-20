@@ -12,7 +12,7 @@ from zoneinfo import ZoneInfo
 
 from . import costs, digest, llm, notify, sources
 from .config import BACKFILL_DAYS, INACTIVE_DAYS, NEWS_LOOKBACK_HOURS, TIMEZONE
-from .db import get_conn
+from .db import get_conn, thesis_text
 from .prompts import ANALYSIS_SYSTEM
 
 log = logging.getLogger(__name__)
@@ -207,7 +207,7 @@ def analyze_company(company: dict, lookback_hours: int = NEWS_LOOKBACK_HOURS) ->
         f"公司：{company['name']}（{market_name} {company['ticker']}）\n"
         f"今天日期：{today}\n"
         f"信息时间范围：{start} 至 {today}\n"
-        f"用户的投资逻辑：{company['thesis'].strip() or '未提供'}\n\n"
+        f"用户的投资逻辑：\n{thesis_text(company) or '未提供'}\n\n"
         f"候选信息：\n{candidates}"
     )
     result = llm.chat_json(
@@ -232,13 +232,13 @@ def analyze_company(company: dict, lookback_hours: int = NEWS_LOOKBACK_HOURS) ->
                     for r in picked]
             conn.execute(
                 "INSERT INTO report_items (report_id, title, summary, direction, score, confidence, horizon,"
-                " frameworks_json, reasoning, watch_points, thesis_impact, thesis_broken, sources_json)"
-                " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                " frameworks_json, reasoning, watch_points, thesis_impact, thesis_note, thesis_broken, sources_json)"
+                " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
                 (report_id, it.get("title") or "", it.get("summary") or "", it.get("direction") or "中性",
                  _clamp(it.get("score"), -10, 10), _clamp(it.get("confidence"), 0, 1), it.get("horizon") or "",
                  json.dumps(it.get("frameworks") or {}, ensure_ascii=False), it.get("reasoning") or "",
                  json.dumps(it.get("watch_points") or [], ensure_ascii=False),
-                 it.get("thesis_impact") or "", 1 if it.get("thesis_broken") else 0,
+                 it.get("thesis_impact") or "", str(it.get("thesis_note") or "")[:200], 1 if it.get("thesis_broken") else 0,
                  json.dumps(srcs, ensure_ascii=False)),
             )
 

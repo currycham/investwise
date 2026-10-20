@@ -146,7 +146,6 @@ main { max-width: 1080px; margin: 0 auto; padding: 0 16px 48px; }
 .company-body { border-top: 1px solid var(--border); padding: 12px 16px; }
 .thesis {
   background: var(--neutral-bg); border-radius: 6px; padding: 8px 12px; margin-bottom: 12px; font-size: 13px;
-  white-space: pre-wrap;
 }
 
 /* 时间线 */
@@ -240,3 +239,39 @@ button.danger { color: var(--bull); border-color: var(--bull); }
 .flash { position: sticky; top: 64px; z-index: 6; background: var(--bear-bg); color: var(--bear); padding: 8px 12px; border-radius: 8px; }
 .flash.error { background: var(--bull-bg); color: var(--bull); }
 @media (max-width: 760px) { .two-col { grid-template-columns: 1fr; } }
+
+/* 提升认知：投资逻辑、先判断、决策日志、复盘 */
+.pre { white-space: pre-wrap; }
+.thesis > div + div { margin-top: 2px; }
+.thesis-form { border: 1px solid var(--border); border-radius: 8px; padding: 4px 12px 12px; margin: 12px 0 0; }
+.thesis-form legend { padding: 0 4px; font-size: 13px; }
+.thesis-form label { margin: 8px 0; }
+.review-out { margin-top: 10px; padding: 10px 12px; background: var(--neutral-bg); border-radius: 8px; }
+.review-out p { margin: 0 0 6px; }
+.review-out ol { margin: 0 0 6px; padding-left: 20px; }
+.review-out li { margin-bottom: 6px; }
+.review-q { color: var(--primary); }
+.tag.judge { background: var(--neutral-bg); color: var(--primary); font-weight: 600; }
+.badge.differ { color: var(--alert); background: var(--alert-bg); }
+.judge-card { border-style: dashed; border-color: var(--primary); }
+.judge-ask { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; margin-top: 8px; }
+.chips { display: flex; gap: 6px; flex-wrap: wrap; margin: 4px 0 10px; }
+.chip { padding: 3px 12px; border-radius: 999px; font-size: 13px; }
+.chip.on { background: var(--primary); color: var(--primary-text); border-color: var(--primary); }
+.decisions { margin: 8px 0; }
+.decisions summary { cursor: pointer; color: var(--muted); font-size: 13px; }
+.decision { border-left: 3px solid var(--border); padding: 4px 10px; margin: 8px 0; }
+.decision-head { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+.decision-head [data-del-decision] { margin-left: auto; padding: 0 6px; }
+.review-note { margin-top: 4px; padding: 6px 10px; background: var(--neutral-bg); border-radius: 6px; }
+.reviews { margin-bottom: 12px; }
+.reviews h2 { margin-bottom: 8px; }
+.review-card { background: var(--card); border: 1px solid var(--primary); border-radius: 10px; padding: 12px 16px; margin-bottom: 10px; }
+.review-card > div { margin: 6px 0; }
+.review-card ul, .review-card ol { margin: 4px 0; padding-left: 20px; }
+.review-qs ol { color: var(--primary); }
+dialog.wide { width: min(860px, calc(100vw - 32px)); }
+dialog h4 { margin: 18px 0 8px; }
+.differ-cell { color: var(--alert); font-weight: 700; }
+.disagree { padding: 8px 0; border-bottom: 1px solid var(--border); }
+.disagree > div + div { margin-top: 2px; }
