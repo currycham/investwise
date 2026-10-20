@@ -21,6 +21,15 @@ const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) =>
 const dirClass = (d) => (d === "利好" ? "bull" : d === "利空" ? "bear" : "neutral");
 const fmtScore = (s) => (s > 0 ? "+" : "") + Number(s).toFixed(0);
 
+// ---------- 首页与使用说明 ----------
+document.querySelectorAll(".guide-slot").forEach((el) => el.append($("#tpl-guide").content.cloneNode(true)));
+$("#btn-guide").onclick = () => {
+  const show = $("#guide").classList.toggle("hidden") === false;
+  if (show) $("#guide").scrollIntoView({ behavior: "smooth", block: "start" });
+};
+$("#guide-close").onclick = () => $("#guide").classList.add("hidden");
+document.querySelectorAll("[data-open]").forEach((b) => (b.onclick = () => $(b.dataset.open === "import" ? "#btn-import" : "#btn-add").click()));
+
 // ---------- 登录 ----------
 let registering = false;
 function showAuth() { $("#auth").classList.remove("hidden"); $("#app").classList.add("hidden"); }
@@ -28,8 +37,8 @@ $("#auth-toggle").onclick = (e) => {
   e.preventDefault();
   registering = !registering;
   $("#auth-invite").classList.toggle("hidden", !registering);
-  $("#auth-submit").textContent = registering ? "注册" : "登录";
-  $("#auth-toggle").textContent = registering ? "已有账号？登录" : "没有账号？注册";
+  $("#auth-submit").textContent = $("#auth-title").textContent = registering ? "注册" : "登录";
+  $("#auth-toggle").textContent = registering ? "已有账号？登录" : "没有账号？注册（需要邀请码）";
 };
 $("#auth-submit").onclick = async () => {
   $("#auth-error").textContent = "";
@@ -112,7 +121,14 @@ function renderAlerts(alerts) {
 function renderCompanies() {
   const list = state.companies;
   $("#company-count").textContent = list.length ? `(${list.length})` : "";
-  $("#empty-hint").classList.toggle("hidden", list.length > 0);
+  // 还没有持仓：显示欢迎和使用说明；加入公司后说明自动收起，可从顶栏「使用说明」再打开
+  const empty = list.length === 0;
+  $("#welcome").classList.toggle("hidden", !empty);
+  $("#welcome-name").textContent = state.me.username;
+  if (empty) $("#guide").classList.remove("hidden");
+  else if (renderCompanies.wasEmpty) $("#guide").classList.add("hidden");
+  renderCompanies.wasEmpty = empty;
+  $(".companies").classList.toggle("hidden", empty);
   $("#company-list").innerHTML = list.map((c) => `
     <div class="company ${c.alerts_7d ? "has-alert" : ""}" id="company-${c.id}">
       <div class="company-head" data-toggle="${c.id}">

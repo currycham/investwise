@@ -8,18 +8,30 @@
 </head>
 <body>
 
-<!-- 登录 -->
-<section id="auth" class="auth hidden">
-  <div class="auth-card">
-    <h1>InvestWise</h1>
-    <p class="muted">每日跟踪你的持仓公司，用问题帮你想清楚</p>
-    <input id="auth-user" placeholder="用户名" autocomplete="username">
-    <input id="auth-pass" type="password" placeholder="密码（至少6位）" autocomplete="current-password">
-    <input id="auth-invite" class="hidden" placeholder="邀请码">
-    <button id="auth-submit" class="primary">登录</button>
-    <a href="#" id="auth-toggle" class="muted small">没有账号？注册</a>
-    <p id="auth-error" class="error"></p>
+<!-- 首页（未登录） -->
+<section id="auth" class="landing hidden">
+  <header class="topbar">
+    <div class="brand">InvestWise</div>
+    <a href="#auth-card" class="small">登录 / 注册</a>
+  </header>
+  <div class="hero">
+    <div class="hero-text">
+      <h1>不替你做决定，<br>帮你把决定想清楚</h1>
+      <p>InvestWise 每天替你盯住持仓公司的新闻和公告，用价值投资等经典框架做初步判断，再用问题帮你检验自己的买入理由。</p>
+      <p class="muted">我们不承诺让你多赚多少钱，只希望你的每一次买入、持有和卖出都更有依据。</p>
+    </div>
+    <div class="auth-card" id="auth-card">
+      <h2 id="auth-title">登录</h2>
+      <input id="auth-user" placeholder="用户名" autocomplete="username">
+      <input id="auth-pass" type="password" placeholder="密码（至少6位）" autocomplete="current-password">
+      <input id="auth-invite" class="hidden" placeholder="邀请码">
+      <button id="auth-submit" class="primary">登录</button>
+      <a href="#" id="auth-toggle" class="muted small">没有账号？注册（需要邀请码）</a>
+      <p id="auth-error" class="error"></p>
+    </div>
   </div>
+  <div class="guide-slot"></div>
+  <p class="disclaimer">本工具仅做信息整理与思考辅助，AI 评分不构成投资建议。</p>
 </section>
 
 <!-- 主界面 -->
@@ -31,10 +43,25 @@
       <button id="btn-run">立即检索</button>
       <button id="btn-import" class="primary">导入公司</button>
       <a id="btn-admin" href="/admin" class="hidden small">后台</a>
+      <button id="btn-guide" class="ghost">使用说明</button>
       <button id="btn-settings" class="ghost" title="设置">⚙</button>
       <button id="btn-logout" class="ghost">退出</button>
     </div>
   </header>
+
+  <section id="welcome" class="welcome hidden">
+    <h2>欢迎，<span id="welcome-name"></span> 👋</h2>
+    <p>先把你持有或正在关注的公司放进来。从明天早上 7:30 开始，这里每天会出现它们的重要变化；刚加入的公司会立即回溯最近一周。</p>
+    <div class="welcome-actions">
+      <button class="primary" data-open="import">导入公司列表</button>
+      <button data-open="add">添加单个公司</button>
+    </div>
+  </section>
+
+  <section id="guide" class="guide hidden">
+    <div class="guide-close"><button id="guide-close" class="ghost small">收起说明 ✕</button></div>
+    <div class="guide-slot"></div>
+  </section>
 
   <section id="digest" class="digest hidden"></section>
 
@@ -49,11 +76,39 @@
       <button id="btn-add" class="ghost">＋ 添加单个</button>
     </div>
     <div id="company-list"></div>
-    <p id="empty-hint" class="empty hidden">还没有公司。点击右上角「导入公司」，粘贴列表或上传 Excel。</p>
   </section>
 
   <p class="disclaimer">本工具仅做信息整理与思考辅助，AI 评分不构成投资建议。</p>
 </main>
+
+<!-- 使用说明：首页和登录后共用 -->
+<template id="tpl-guide">
+  <h2 class="guide-h">它想解决的问题</h2>
+  <div class="guide-grid">
+    <div class="guide-card"><b>信息太多，重要的太少</b><p>每天几十条新闻，大部分是转载、涨跌播报和软文。我们只留下真正可能改变公司价值的那几条，没有就什么都不显示。</p></div>
+    <div class="guide-card"><b>情绪先于判断</b><p>看到标题就想买或卖。每条信息都附上评分、置信度和背后的推理，让你先看依据，再做决定。</p></div>
+    <div class="guide-card"><b>买入理由悄悄失效</b><p>当初为什么买，很容易忘。你写下的投资逻辑会被拿来对照每天的新信息：是加强了，还是削弱了？</p></div>
+    <div class="guide-card"><b>缺少好问题</b><p>给答案容易，问对问题难。提问助手不告诉你买不买，而是问你还没想清楚的地方。</p></div>
+  </div>
+
+  <h2 class="guide-h">怎么用</h2>
+  <ol class="guide-steps">
+    <li><b>导入持仓。</b>点「导入公司」，粘贴任意格式的列表（如「茅台、腾讯 00700、AAPL」）或上传 Excel，AI 识别后你核对一遍即可。支持 A股、港股、美股。</li>
+    <li><b>写下你的投资逻辑（最重要的一步）。</b>点公司旁的「编辑」，用两三句话写清楚为什么买它、什么情况下你会卖。例如：
+      <blockquote>白酒龙头，品牌护城河 + 提价能力，自由现金流稳定。如果批价持续跌破出厂价、或渠道库存连续两个季度上升，说明提价能力在减弱，考虑减仓。</blockquote>
+      写得越具体，AI 越能判断新信息和你的逻辑是什么关系；写不出来，本身就是一个值得注意的信号。</li>
+    <li><b>每天早上看一眼。</b>页面最上方是「今日概览」：今天哪些公司有变化、整体偏利好还是利空，以及几个组合层面值得想一想的问题。重大信息会出现在「预警」里高亮，也可以在 ⚙ 设置里填邮箱，有预警时发邮件给你。</li>
+    <li><b>和提问助手聊一聊。</b>点公司的「💬 提问我」，它会结合最近的信息和你的投资逻辑向你提问。试着认真回答，你会发现自己真正理解和还没理解的地方。</li>
+  </ol>
+
+  <h2 class="guide-h">怎么读懂评分</h2>
+  <div class="guide-grid">
+    <div class="guide-card"><b>评分 −10 ~ +10</b><p>±1~2 情绪噪音；±3~5 有影响但不改变大局；±6~8 实质改变盈利预期或竞争格局；±9~10 关乎公司存续。<span class="badge bull">利好为红</span> <span class="badge bear">利空为绿</span>，沿用 A股习惯。</p></div>
+    <div class="guide-card"><b>多个框架交叉看</b><p>每条信息分别从四个经典框架打分：价值投资（护城河、现金流、安全边际）、成长投资（增长空间与可持续性）、管理层与治理、催化剂与风险，并写明推理和后续要观察的信号。</p></div>
+    <div class="guide-card"><b>什么时候预警</b><p>评分达到你设的阈值（默认 ±6）且置信度 ≥ 0.6；或者信息直接证伪了你的投资逻辑——这种情况无论分数多少都会预警。</p></div>
+    <div class="guide-card"><b>它不做什么</b><p>不给买卖建议，不预测股价，不推荐股票。AI 也会出错，每条结论都附原始来源链接，请以原文为准。</p></div>
+  </div>
+</template>
 
 <!-- 导入 -->
 <dialog id="dlg-import">
