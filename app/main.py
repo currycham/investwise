@@ -414,6 +414,11 @@ def index():
     return FileResponse(STATIC / "index.html")
 
 
+@app.get("/favicon.ico", include_in_schema=False)
+def favicon():
+    return FileResponse(STATIC / "favicon.png")
+
+
 @app.get("/admin")
 def admin_page(session: str | None = Cookie(default=None)):
     user = user_from_session(session)
