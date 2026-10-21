@@ -21,7 +21,7 @@ function fmtMetric(key, row) {
   if (meta.fmt === "text") return esc(key === "report_period" && v ? v.slice(0, 7) : v || "—");
   if (v === null || v === undefined) return '<span class="muted">—</span>';
   if (meta.fmt === "money") return money(v, key === "market_cap" ? row.currency : "CNY");
-  if (meta.fmt === "price") return `${num(v, v >= 100 ? 1 : 2)} <span class="muted small">${row.currency}</span>`;
+  if (meta.fmt === "price") return `${num(v, v >= 100 ? 1 : v < 1 ? 3 : 2)} <span class="muted small">${row.currency}</span>`;
   if (meta.fmt === "x") return num(v, v >= 100 ? 0 : 2);
   const txt = `${SIGNED.has(key) && v > 0 ? "+" : ""}${num(v, Math.abs(v) >= 100 ? 0 : 1)}%`;
   if (SIGNED.has(key)) return `<span class="${signCls(v)}">${txt}</span>`;

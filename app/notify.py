@@ -1,4 +1,4 @@
-"""预警邮件：每次检索结束后，把本次新出现的预警信息发到用户邮箱（每条只发一次）。"""
+"""预警邮件：每次检索结束后，把新出现的预警信息、暴跌和新财报发到用户邮箱（每条只发一次）。"""
 import json
 import logging
 import smtplib
@@ -37,7 +37,7 @@ def send(to: str, subject: str, html: str, text: str) -> None:
 
 
 def send_alerts(user_id: int) -> int:
-    """发送最近 2 天新入库、还没发过的预警，返回条数。
+    """发送最近 2 天新入库、还没发过的预警，以及还没提醒过的暴跌和新财报，返回条数。
 
     用入库时间而不是任务开始时间：任务因预算用完中途停止时，已分析出的预警会在下一次任务里补发。"""
     with get_conn() as conn:
@@ -53,16 +53,41 @@ def send_alerts(user_id: int) -> int:
                 WHERE u.id = ? AND ri.created_at >= datetime('now', '-2 day') AND ri.notified_at IS NULL AND {alert_condition()}
                 ORDER BY ri.thesis_broken DESC, ABS(ri.score) DESC""",
             (user_id,)).fetchall()
-    if not rows:
+        events = _pending_events(conn, user_id)
+    if not rows and not events:
         return 0
-    names = "、".join(dict.fromkeys(r["company_name"] for r in rows))
-    subject = f"InvestWise 预警：{names}（{len(rows)} 条）"
+    names = "、".join(dict.fromkeys([r["company_name"] for r in rows] + [e["company_name"] for e in events]))
+    subject = f"InvestWise 预警：{names}（{len(rows) + len(events)} 条）"
     hide = user["judge_first_at"] is not None  # 先判断，再看 AI：邮件里也不透露 AI 的结论
-    send(user["email"], subject, _html(rows, hide), _text(rows, hide))
+    send(user["email"], subject, _html(rows, hide, events), _text(rows, hide, events))
     with get_conn() as conn:
         conn.executemany("UPDATE report_items SET notified_at = CURRENT_TIMESTAMP WHERE id = ?",
                          [(r["id"],) for r in rows])
-    return len(rows)
+        conn.executemany("INSERT OR IGNORE INTO event_notices (user_id, event_id) VALUES (?, ?)",
+                         [(user_id, e["id"]) for e in events])
+    return len(rows) + len(events)
+
+
+def _pending_events(conn, user_id: int) -> list[dict]:
+    """最近 3 天出现、还没提醒过的暴跌和新财报（只看持仓中和观察中的公司）；新财报附上按持仓生成的分析结论。"""
+    rows = conn.execute(
+        """SELECT e.*, c.id AS company_id, c.name AS company_name,
+                  (SELECT content_json FROM report_analyses ra WHERE ra.company_id = c.id AND ra.period = e.event_date)
+                    AS report_json
+           FROM stock_events e JOIN companies c ON c.market = e.market AND c.ticker = e.ticker
+           WHERE c.user_id = ? AND c.status != 'closed' AND e.created_at >= datetime('now', '-3 day')
+             AND NOT EXISTS (SELECT 1 FROM event_notices n WHERE n.user_id = ? AND n.event_id = e.id)
+           ORDER BY e.kind, e.event_date DESC""", (user_id, user_id)).fetchall()
+    out = []
+    for r in rows:
+        d = dict(r)
+        if d["kind"] == "drop":
+            d["detail"] = json.loads(d["analysis_json"]).get("summary", "") if d["analysis_json"] else ""
+        else:
+            rep = json.loads(d["report_json"]) if d["report_json"] else {}
+            d["detail"] = (f"[{rep['verdict']}] " if rep.get("verdict") else "") + rep.get("headline", "")
+        out.append(d)
+    return out
 
 
 def send_test(to: str) -> None:
@@ -79,8 +104,19 @@ def _label(r, hide: bool = False) -> str:
     return f"{r['direction']} {r['score']:+.0f}"
 
 
-def _html(rows, hide: bool = False) -> str:
-    parts = []
+def _event_html(e) -> str:
+    color = "#2e7d32" if e["kind"] == "drop" else "#3c5bd6"
+    label = "暴跌" if e["kind"] == "drop" else "新财报"
+    return f"""
+<div style="border-left:4px solid {color};padding:8px 12px;margin:12px 0;background:#fafafa">
+  <div style="color:#888;font-size:13px">{escape(e['company_name'])} · {MARKET[e['market']]} {escape(e['ticker'])} · {e['event_date']}</div>
+  <div style="font-size:16px;margin:4px 0"><b style="color:{color}">[{label}]</b> <b>{escape(e['title'])}</b></div>
+  <p style="margin:4px 0">{escape(e['detail'] or '打开网站「数据」页查看详情。')}</p>
+</div>"""
+
+
+def _html(rows, hide: bool = False, events=()) -> str:
+    parts = [_event_html(e) for e in events]
     for r in rows:
         bull = r["score"] > 0 and not r["thesis_broken"]
         color = "#3c5bd6" if hide else "#c62828" if bull else "#2e7d32"  # 红涨绿跌
@@ -106,7 +142,9 @@ def _html(rows, hide: bool = False) -> str:
 </div>"""
 
 
-def _text(rows, hide: bool = False) -> str:
-    lines = [f"[{_label(r, hide)}] {r['company_name']}（{r['ticker']}）{r['report_date']}\n{r['title']}\n{r['summary']}\n"
-             for r in rows]
+def _text(rows, hide: bool = False, events=()) -> str:
+    lines = [f"[{'暴跌' if e['kind'] == 'drop' else '新财报'}] {e['company_name']}（{e['ticker']}）{e['event_date']}\n"
+             f"{e['title']}\n{e['detail']}\n" for e in events]
+    lines += [f"[{_label(r, hide)}] {r['company_name']}（{r['ticker']}）{r['report_date']}\n{r['title']}\n{r['summary']}\n"
+              for r in rows]
     return "\n".join(lines) + f"\n查看完整分析：{SITE_URL}\nAI 初步判断，仅供参考，不构成投资建议。"

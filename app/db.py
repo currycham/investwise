@@ -202,6 +202,13 @@ CREATE TABLE IF NOT EXISTS closed_trades (
     summary_json TEXT DEFAULT '',
     created_at TEXT DEFAULT CURRENT_TIMESTAMP
 );
+-- 暴跌 / 新财报事件的邮件提醒，每个用户每个事件只发一次
+CREATE TABLE IF NOT EXISTS event_notices (
+    user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    event_id INTEGER NOT NULL REFERENCES stock_events(id) ON DELETE CASCADE,
+    sent_at TEXT DEFAULT CURRENT_TIMESTAMP,
+    PRIMARY KEY (user_id, event_id)
+);
 -- 数据概览：每个用户每天一条
 CREATE TABLE IF NOT EXISTS user_data_digests (
     user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,

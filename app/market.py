@@ -71,6 +71,11 @@ def _a_exchange(ticker: str) -> str:
         "BJ" if ticker.startswith(("4", "8", "92")) else "SZ"
 
 
+def is_fund(market: str, ticker: str) -> bool:
+    """场内 ETF / LOF（沪市 5 开头、深市 15/16/18 开头）：只有价格，没有估值和财报。"""
+    return market == "A" and ticker.startswith(("5", "15", "16", "18"))
+
+
 def _us_em(ticker: str) -> str:
     return ticker.replace(".", "_")
 
@@ -111,7 +116,9 @@ def _fetch_prices(market: str, ticker: str, stored_prefix: str) -> tuple[list[tu
     start = (date.today() - timedelta(days=PRICE_DAYS)).strftime("%Y%m%d")
     kw = dict(period="daily", start_date=start, end_date="20500101", adjust="qfq")
     prefix = stored_prefix
-    if market == "A":
+    if is_fund(market, ticker):
+        df = ak.fund_etf_hist_em(symbol=ticker, **kw)
+    elif market == "A":
         df = ak.stock_zh_a_hist(symbol=ticker, **kw)
     elif market == "HK":
         df = ak.stock_hk_hist(symbol=ticker, **kw)
@@ -422,7 +429,10 @@ def refresh_stock(market: str, ticker: str, fx: dict | None = None) -> list[dict
     old_annual = json.loads(old.get("annual_json") or "[]")
     stale = (not old.get("fin_updated_at") or old["fin_updated_at"] < str(date.today() - timedelta(days=7))
              or not old.get("industry"))
-    data = FETCHERS[market](ticker, need_fin=stale or not old_annual, price=metrics.get("price"))
+    if is_fund(market, ticker):
+        data = {"metrics": {}, "errors": [], "industry": "ETF / 基金"}
+    else:
+        data = FETCHERS[market](ticker, need_fin=stale or not old_annual, price=metrics.get("price"))
     latest = data.get("latest")
     new_report = bool(latest and old.get("latest_report") and latest["date"] > old["latest_report"])
     if new_report and "annual" not in data:  # 出了新报告：重新拉一次年度财务
