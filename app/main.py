@@ -1,11 +1,14 @@
+import hashlib
 import json
 import logging
+import re
 import time
 from contextlib import asynccontextmanager
+from functools import lru_cache
 
 from apscheduler.schedulers.background import BackgroundScheduler
 from fastapi import Cookie, Depends, FastAPI, File, Form, HTTPException, Response, UploadFile
-from fastapi.responses import FileResponse, PlainTextResponse
+from fastapi.responses import FileResponse, HTMLResponse, PlainTextResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
@@ -412,9 +415,26 @@ STATIC = BASE_DIR / "static"
 app.mount("/static", StaticFiles(directory=STATIC), name="static")
 
 
+def _with_asset_version(page: str) -> str:
+    """给页面里的 /static/*.js、*.css 加上内容哈希，部署新代码后浏览器不会继续用缓存里的旧脚本。"""
+    def version(m: re.Match) -> str:
+        path = STATIC / m.group(1)
+        digest = hashlib.md5(path.read_bytes()).hexdigest()[:8] if path.exists() else "0"
+        return f'/static/{m.group(1)}?v={digest}"'
+    return re.sub(r'/static/([\w.-]+\.(?:js|css))"', version, page)
+
+
+@lru_cache
+def _page(name: str) -> str:
+    return _with_asset_version((STATIC / name).read_text(encoding="utf-8"))
+
+
+NO_CACHE = {"Cache-Control": "no-cache"}  # 页面本身每次都向服务器确认是否有新版本
+
+
 @app.get("/")
 def index():
-    return FileResponse(STATIC / "index.html")
+    return HTMLResponse(_page("index.html"), headers=NO_CACHE)
 
 
 @app.get("/favicon.ico", include_in_schema=False)
@@ -427,4 +447,4 @@ def admin_page(session: str | None = Cookie(default=None)):
     user = user_from_session(session)
     if not user or user["role"] != "admin":
         return PlainTextResponse("Not Found", status_code=404)
-    return FileResponse(STATIC / "admin.html")
+    return HTMLResponse(_page("admin.html"), headers=NO_CACHE)
