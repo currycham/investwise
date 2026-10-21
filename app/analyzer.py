@@ -10,7 +10,7 @@ import threading
 from datetime import datetime, timedelta, timezone
 from zoneinfo import ZoneInfo
 
-from . import costs, digest, llm, notify, sources
+from . import costs, digest, llm, notify, portfolio, profile, sources
 from .config import BACKFILL_DAYS, INACTIVE_DAYS, NEWS_LOOKBACK_HOURS, TIMEZONE
 from .db import get_conn, thesis_text
 from .prompts import ANALYSIS_SYSTEM
@@ -35,8 +35,9 @@ def now_local() -> datetime:
 # ---------- 任务队列 ----------
 
 def enqueue(user_id: int | None = None, company_ids: list[int] | None = None,
-            lookback_hours: int = NEWS_LOOKBACK_HOURS, label: str = "每日检索") -> None:
-    job = {"user_id": user_id, "company_ids": company_ids, "lookback_hours": lookback_hours, "label": label}
+            lookback_hours: int = NEWS_LOOKBACK_HOURS, label: str = "每日检索", market_only: bool = False) -> None:
+    job = {"user_id": user_id, "company_ids": company_ids, "lookback_hours": lookback_hours, "label": label,
+           "market_only": market_only}
     with _worker_lock:
         _pending.append(job)
         _queue.put(job)
@@ -47,6 +48,12 @@ def enqueue_backfill(user_id: int, company_ids: list[int]) -> None:
     """新加入/更换的持仓：先回溯最近一周，不用等到第二天的定时检索。"""
     if company_ids:
         enqueue(user_id, company_ids, BACKFILL_DAYS * 24, f"新持仓回溯{BACKFILL_DAYS}天")
+
+
+def enqueue_market(user_id: int, company_ids: list[int]) -> None:
+    """只更新行情与财务（免费数据源，不调用模型）：老用户第一次打开数据页时补齐数据。"""
+    if company_ids:
+        enqueue(user_id, company_ids, label="更新行情", market_only=True)
 
 
 def pending_jobs() -> list[dict]:
@@ -80,13 +87,15 @@ def _work_loop() -> None:
 # ---------- 执行 ----------
 
 def run(user_id: int | None = None, company_ids: list[int] | None = None,
-        lookback_hours: int = NEWS_LOOKBACK_HOURS, label: str = "每日检索") -> None:
+        lookback_hours: int = NEWS_LOOKBACK_HOURS, label: str = "每日检索", market_only: bool = False) -> None:
     """同步执行一次检索。user_id 为空时处理所有用户；company_ids 限定只处理这些公司。"""
     status.update(running=True, label=label, user_id=user_id, progress="开始", errors=[],
                   started_at=now_local().isoformat(timespec="seconds"), finished_at=None)
     job_id = None
     try:
-        sql, args = "SELECT c.* FROM companies c JOIN users u ON u.id = c.user_id WHERE u.banned = 0", []
+        # 清仓的公司（投过的）停止跟踪
+        sql, args = ("SELECT c.* FROM companies c JOIN users u ON u.id = c.user_id"
+                     " WHERE u.banned = 0 AND c.status != 'closed'"), []
         if user_id:
             sql, args = sql + " AND c.user_id = ?", args + [user_id]
         elif not company_ids:
@@ -100,6 +109,16 @@ def run(user_id: int | None = None, company_ids: list[int] | None = None,
             companies = [dict(r) for r in conn.execute(sql, args)]
             job_id = conn.execute("INSERT INTO jobs (label, user_id, company_count) VALUES (?, ?, ?)",
                                   (label, user_id, len(companies))).lastrowid
+
+        # 行情与财务（免费数据源）：价格、估值分位、财务；发现暴跌和新财报时做分析
+        try:
+            portfolio.refresh_market(companies, status)
+        except llm.BudgetError:
+            _over_budget()
+            return
+        if market_only:
+            status["progress"] = "完成"
+            return
 
         targets = {(c["market"], c["ticker"]): c["name"] for c in companies}
         for i, ((market, ticker), name) in enumerate(targets.items(), 1):
@@ -132,6 +151,11 @@ def run(user_id: int | None = None, company_ids: list[int] | None = None,
             except Exception as e:
                 log.exception("digest failed")
                 status["errors"].append(f"今日概览生成失败：{e}")
+            try:
+                portfolio.generate_data_digest(uid)
+            except Exception as e:
+                log.exception("data digest failed")
+                status["errors"].append(f"数据概览生成失败：{e}")
             try:
                 notify.send_alerts(uid)
             except Exception as e:
@@ -194,6 +218,8 @@ def analyze_company(company: dict, lookback_hours: int = NEWS_LOOKBACK_HOURS) ->
         )]
     if not rows:
         return
+    with get_conn() as conn:
+        user = dict(conn.execute("SELECT * FROM users WHERE id = ?", (company["user_id"],)).fetchone())
 
     today = now_local().date()
     start = (now_local() - timedelta(hours=lookback_hours)).date()
@@ -207,7 +233,8 @@ def analyze_company(company: dict, lookback_hours: int = NEWS_LOOKBACK_HOURS) ->
         f"公司：{company['name']}（{market_name} {company['ticker']}）\n"
         f"今天日期：{today}\n"
         f"信息时间范围：{start} 至 {today}\n"
-        f"用户的投资逻辑：\n{thesis_text(company) or '未提供'}\n\n"
+        f"用户的投资逻辑：\n{thesis_text(company) or '未提供'}\n"
+        f"用户的投资画像：\n{profile.brief(user) or '未提供'}\n\n"
         f"候选信息：\n{candidates}"
     )
     result = llm.chat_json(
@@ -232,14 +259,15 @@ def analyze_company(company: dict, lookback_hours: int = NEWS_LOOKBACK_HOURS) ->
                     for r in picked]
             conn.execute(
                 "INSERT INTO report_items (report_id, title, summary, direction, score, confidence, horizon,"
-                " frameworks_json, reasoning, watch_points, thesis_impact, thesis_note, thesis_broken, sources_json)"
-                " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                " frameworks_json, reasoning, watch_points, thesis_impact, thesis_note, thesis_broken, sources_json,"
+                " profile_note, relevance) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
                 (report_id, it.get("title") or "", it.get("summary") or "", it.get("direction") or "中性",
                  _clamp(it.get("score"), -10, 10), _clamp(it.get("confidence"), 0, 1), it.get("horizon") or "",
                  json.dumps(it.get("frameworks") or {}, ensure_ascii=False), it.get("reasoning") or "",
                  json.dumps(it.get("watch_points") or [], ensure_ascii=False),
                  it.get("thesis_impact") or "", str(it.get("thesis_note") or "")[:200], 1 if it.get("thesis_broken") else 0,
-                 json.dumps(srcs, ensure_ascii=False)),
+                 json.dumps(srcs, ensure_ascii=False), str(it.get("profile_note") or "")[:300],
+                 _clamp(it.get("relevance", 0.5), 0, 1)),
             )
 
 

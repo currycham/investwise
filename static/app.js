@@ -1,6 +1,7 @@
 const $ = (s) => document.querySelector(s);
 const MARKET = { A: "A股", HK: "港股", US: "美股" };
-const state = { me: null, companies: [], open: new Set(), chatCompany: null, editing: null };
+const state = { me: null, companies: [], open: new Set(), chatCompany: null, editing: null, newsPool: "all" };
+const POOL = { holding: "持仓中", watching: "观察中", closed: "投过的" };
 
 async function api(path, opts = {}) {
   const init = { credentials: "same-origin", ...opts };
@@ -57,6 +58,19 @@ api("/api/public-config").then((c) => {
 $("#auth-pass").onkeydown = (e) => { if (e.key === "Enter") $("#auth-submit").click(); };
 $("#btn-logout").onclick = async () => { await api("/api/logout", { method: "POST" }); showAuth(); };
 
+// ---------- 标签页：我的画像 / 资讯 / 数据 ----------
+const TABS = ["profile", "news", "data"];
+function showTab(name) {
+  if (!TABS.includes(name)) name = "news";
+  state.tab = name;
+  TABS.forEach((t) => $(`#tab-${t}`).classList.toggle("hidden", t !== name));
+  document.querySelectorAll("#tabs [data-tab]").forEach((b) => b.classList.toggle("on", b.dataset.tab === name));
+  if (location.hash !== `#${name}`) history.replaceState(null, "", `#${name}`);
+  if (name === "profile") loadProfile();
+  if (name === "data") loadData();
+}
+document.querySelectorAll("#tabs [data-tab]").forEach((b) => (b.onclick = () => showTab(b.dataset.tab)));
+
 // ---------- 渲染 ----------
 async function boot() {
   try { state.me = await api("/api/me"); } catch { return; }
@@ -64,6 +78,7 @@ async function boot() {
   $("#app").classList.remove("hidden");
   $("#btn-admin").classList.toggle("hidden", !state.me.is_admin);
   await refresh();
+  showTab(location.hash.slice(1) || "news");
   pollStatus();
 }
 
@@ -71,6 +86,7 @@ async function refresh() {
   const [companies, alerts, digest, due] = await Promise.all([
     api("/api/companies"), api("/api/alerts"), api("/api/digest"), api("/api/decisions/due")]);
   state.companies = companies;
+  if (state.tab === "data") loadData();
   renderReviews(due);
   renderDigest(digest);
   renderAlerts(alerts);
@@ -135,10 +151,17 @@ function renderAlerts(alerts) {
 }
 
 function renderCompanies() {
-  const list = state.companies;
-  $("#company-count").textContent = list.length ? `(${list.length})` : "";
+  // 资讯只跟踪持仓中和观察中的公司；清仓的公司停止跟踪，在「数据 → 投过的」里查看
+  const tracked = state.companies.filter((c) => c.status !== "closed");
+  const list = tracked.filter((c) => state.newsPool === "all" || c.status === state.newsPool);
+  $("#company-count").textContent = tracked.length ? `(${tracked.length})` : "";
+  const counts = { all: tracked.length, holding: 0, watching: 0 };
+  tracked.forEach((c) => counts[c.status]++);
+  $("#news-pool").innerHTML = counts.watching ? [["all", "全部"], ["holding", "持仓中"], ["watching", "观察中"]]
+    .map(([k, v]) => `<button class="chip ${state.newsPool === k ? "on" : ""}" data-pool="${k}">${v} ${counts[k]}</button>`).join("") : "";
+  $("#news-pool").querySelectorAll("[data-pool]").forEach((b) => (b.onclick = () => { state.newsPool = b.dataset.pool; renderCompanies(); }));
   // 还没有持仓：显示欢迎和使用说明；加入公司后说明自动收起，可从顶栏「使用说明」再打开
-  const empty = list.length === 0;
+  const empty = state.companies.length === 0;
   $("#welcome").classList.toggle("hidden", !empty);
   $("#welcome-name").textContent = state.me.username;
   if (empty) $("#guide").classList.remove("hidden");
@@ -150,6 +173,7 @@ function renderCompanies() {
       <div class="company-head" data-toggle="${c.id}">
         <span class="company-name">${esc(c.name)}</span>
         <span class="tag">${MARKET[c.market]} ${esc(c.ticker)}</span>
+        ${c.status === "watching" ? '<span class="tag">观察中</span>' : ""}
         ${c.alerts_7d ? `<span class="tag alert">预警 ${c.alerts_7d}</span>` : ""}
         ${c.pending_judgments ? `<span class="tag judge">待你判断 ${c.pending_judgments}</span>` : ""}
         ${c.last_report ? `<span class="muted small">最近更新 ${c.last_report}</span>` : '<span class="muted small">暂无重要信息</span>'}
@@ -248,6 +272,7 @@ function renderItem(it) {
         ${mine}
       </div>
       <p>${esc(it.summary)}</p>
+      ${it.profile_note ? `<p class="profile-note"><span class="tag">从你的风格看</span> ${esc(it.profile_note)}</p>` : ""}
       ${it.thesis_impact && it.thesis_impact !== "未提供" && it.thesis_impact !== "无关"
         ? `<p><span class="badge ${it.thesis_impact === "加强" ? "bull" : "bear"}">投资逻辑：${esc(it.thesis_impact)}${it.thesis_broken ? "（核心前提被证伪）" : ""}</span>
             ${it.thesis_note ? `<span class="muted small">${esc(it.thesis_note)}</span>` : ""}</p>` : ""}
@@ -353,6 +378,8 @@ function openCompanyDialog(id) {
   $("#cf-assumptions").value = c?.assumptions || "";
   $("#cf-wrongif").value = c?.wrong_if || "";
   $("#cf-horizon").value = c?.horizon || "";
+  $("#cf-status").value = "holding";
+  $("#cf-status-wrap").classList.toggle("hidden", !!c);  // 已有公司的池子在「数据」页里调整
   $("#cf-review-out").classList.add("hidden");
   $("#cf-replace-hint").textContent = c ? "提示：如果修改了代码（换成另一家公司），该公司的历史信息和对话会被清空。" : "";
   $("#cf-error").textContent = "";
@@ -360,7 +387,7 @@ function openCompanyDialog(id) {
 }
 $("#cf-save").onclick = async () => {
   const body = { name: $("#cf-name").value, ticker: $("#cf-ticker").value, market: $("#cf-market").value || null,
-    ...thesisForm() };
+    status: $("#cf-status").value, ...thesisForm() };
   try {
     if (state.editing) await api(`/api/companies/${state.editing.id}`, { method: "PUT", json: body });
     else await api("/api/companies", { json: body });
@@ -626,4 +653,5 @@ $("#chat-reset").onclick = async () => {
   openChat(state.chatCompany.id);
 };
 
-boot().catch(showAuth);
+// 等 profile.js、data.js 都加载完再启动
+window.addEventListener("DOMContentLoaded", () => boot().catch(showAuth));

@@ -7,7 +7,7 @@ import logging
 from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo
 
-from . import llm
+from . import llm, profile
 from .config import TIMEZONE
 from .db import alert_condition, get_conn, thesis_text
 from .prompts import DIGEST_SYSTEM
@@ -29,7 +29,8 @@ def generate(user_id: int) -> None:
     today, start_utc = _today_bounds()
     with get_conn() as conn:
         user = conn.execute("SELECT * FROM users WHERE id = ?", (user_id,)).fetchone()
-        companies = [dict(r) for r in conn.execute("SELECT * FROM companies WHERE user_id = ?", (user_id,))]
+        companies = [dict(r) for r in conn.execute("SELECT * FROM companies WHERE user_id = ? AND status != 'closed'",
+                                                   (user_id,))]
         items = [dict(r) for r in conn.execute(
             f"""SELECT ri.*, dr.report_date, dr.company_id, {alert_condition('?')} AS is_alert
                 FROM report_items ri JOIN daily_reports dr ON dr.id = ri.report_id
@@ -46,7 +47,7 @@ def generate(user_id: int) -> None:
     rows = [_company_row(c, by_company[c["id"]]) for c in companies if c["id"] in by_company]
     rows.sort(key=lambda r: (-r["alerts"], -abs(r["score"])))
 
-    text = _write(user_id, companies, rows, by_company)
+    text = _write(dict(user), companies, rows, by_company)
     for r in rows:
         r["summary"] = text["summaries"].get(str(r["company_id"])) or r["top_title"]
     with get_conn() as conn:
@@ -89,7 +90,7 @@ def _company_row(company: dict, items: list[dict]) -> dict:
     }
 
 
-def _write(user_id: int, companies: list[dict], rows: list[dict], by_company: dict[int, list[dict]]) -> dict:
+def _write(user: dict, companies: list[dict], rows: list[dict], by_company: dict[int, list[dict]]) -> dict:
     quiet = [c["name"] for c in companies if c["id"] not in by_company]
     blocks = []
     for r in rows:
@@ -101,7 +102,9 @@ def _write(user_id: int, companies: list[dict], rows: list[dict], by_company: di
             f"### company_id={r['company_id']} {c['name']}（{MARKET[c['market']]} {c['ticker']}）"
             f" 净倾向 {r['stance']} {r['score']:+.1f}；对投资逻辑的影响：{r['thesis_effect'] or '无'}\n"
             f"用户的投资逻辑：{thesis_text(c) or '未提供'}\n{lines}")
-    user_msg = (f"用户共持有 {len(companies)} 家公司。\n"
+    user_id = user["id"]
+    user_msg = (f"用户的投资画像：{profile.brief(user) or '未提供'}\n"
+                f"用户共持有 {len(companies)} 家公司。\n"
                 f"今天有新信息的公司：\n\n" + "\n\n".join(blocks) +
                 f"\n\n今天没有重要信息的公司：{'、'.join(quiet) or '无'}")
     fallback = {"overview": f"今天 {len(companies)} 家公司中 {len(rows)} 家有新信息。",

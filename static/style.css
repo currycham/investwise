@@ -278,3 +278,100 @@ dialog h4 { margin: 18px 0 8px; }
 .differ-cell { color: var(--alert); font-weight: 700; }
 .disagree { padding: 8px 0; border-bottom: 1px solid var(--border); }
 .disagree > div + div { margin-top: 2px; }
+
+/* 标签页 */
+.tabs { display: flex; gap: 4px; border-bottom: 1px solid var(--border); margin: 4px 0 16px; overflow-x: auto; }
+.tabs button { border: 0; border-bottom: 2px solid transparent; border-radius: 0; background: transparent; padding: 8px 16px; font-size: 15px; color: var(--muted); white-space: nowrap; }
+.tabs button.on { color: var(--text); border-bottom-color: var(--primary); font-weight: 600; }
+.section-head .chips { margin: 0 auto 0 12px; }
+
+/* 我的画像 */
+.pf-card { border-color: var(--primary); }
+.pf-headline { font-size: 18px; font-weight: 600; margin: 10px 0; }
+.pf-styles { display: grid; gap: 4px; max-width: 420px; margin-bottom: 12px; }
+.pf-style { display: grid; grid-template-columns: 9em 1fr 3em; gap: 8px; align-items: center; }
+.pf-style .bar { margin: 0; }
+.pf-style .bar i { background: var(--primary); }
+.pf-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 10px; margin-bottom: 8px; }
+.pf-block { background: var(--neutral-bg); border-radius: 8px; padding: 10px 12px; }
+.pf-block ul { margin: 6px 0 0; padding-left: 18px; }
+.pf-block li { margin: 3px 0; }
+.pf-gaps { background: var(--alert-bg); }
+.pf-gaps b { color: var(--alert); }
+.pf-questions li { color: var(--primary); }
+.pf-group { margin-top: 10px; }
+.pf-group .chips { margin-top: 4px; }
+.card h2 .small { font-weight: 400; margin-left: 6px; }
+.card > p { margin: 8px 0; }
+.profile-note { color: var(--primary); }
+.profile-note .tag { color: var(--primary); }
+
+/* 数据页 */
+:root { --c0: #3c5bd6; --c1: #f59e0b; --c2: #0ea5a4; --c3: #a855f7; --c4: #ec4899; --c5: #94a3b8; }
+@media (prefers-color-scheme: dark) { :root { --c0: #6d86f0; --c1: #fbbf24; --c2: #2dd4bf; --c3: #c084fc; --c4: #f472b6; --c5: #64748b; } }
+.c0 { background: var(--c0); } .c1 { background: var(--c1); } .c2 { background: var(--c2); }
+.c3 { background: var(--c3); } .c4 { background: var(--c4); } .c5 { background: var(--c5); }
+.bull { color: var(--bull); } .bear { color: var(--bear); }
+.hot { color: var(--alert); font-weight: 600; }
+.cool { color: var(--primary); font-weight: 600; }
+.badge.risk { color: var(--alert); background: var(--alert-bg); font-weight: 500; }
+.badge.chance { color: var(--primary); background: var(--neutral-bg); font-weight: 500; }
+.data-overview .stats { margin: 12px 0 4px; }
+.data-overview .stat .v { font-size: 18px; }
+.points { margin: 4px 0 8px; padding-left: 20px; }
+.points li { margin: 3px 0; }
+.dists { display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 16px; margin-top: 8px; }
+.stack { display: flex; height: 10px; border-radius: 5px; overflow: hidden; margin: 4px 0; background: var(--neutral-bg); }
+.stack i { display: block; height: 100%; }
+.legend { display: flex; flex-wrap: wrap; gap: 4px 12px; font-size: 12px; color: var(--muted); }
+.legend b { display: inline-block; width: 8px; height: 8px; border-radius: 2px; margin-right: 4px; }
+.events h2 { margin-bottom: 6px; }
+.event-row { display: grid; grid-template-columns: 6.5em auto auto 1fr; gap: 10px; align-items: baseline; padding: 7px 0; border-top: 1px dashed var(--border); cursor: pointer; }
+.event-detail { padding: 4px 0 8px 1em; font-size: 13px; }
+.event-detail ul { margin: 4px 0; padding-left: 18px; }
+.data-toolbar { display: flex; flex-wrap: wrap; gap: 8px 16px; align-items: center; margin: 16px 0 8px; }
+.data-toolbar .chips { margin: 0; }
+.data-toolbar #btn-prefs { margin-left: auto; }
+.data-tbl th { cursor: pointer; user-select: none; }
+.data-tbl th:last-child { cursor: default; }
+.data-tbl td, .data-tbl th { white-space: nowrap; }
+.data-tbl td:last-child { white-space: normal; min-width: 280px; }
+.data-tbl td:last-child .badge { display: inline-block; margin: 1px 0; }
+.data-row { cursor: pointer; }
+.data-row:hover td, .data-row.open td { background: var(--neutral-bg); }
+.sticky { position: sticky; left: 0; background: var(--card); z-index: 1; }
+.data-row:hover .sticky, .data-row.open .sticky { background: var(--neutral-bg); }
+.detail-row > td { background: var(--bg); white-space: normal; padding: 12px; }
+.wcell { position: relative; display: inline-block; min-width: 4.5em; text-align: right; }
+.wcell i { position: absolute; left: 0; bottom: -2px; height: 3px; background: var(--primary); border-radius: 2px; opacity: .6; }
+/* 详情放在宽表格的一行里：固定在可视区域内，不随表格横向滚动 */
+.company-detail { position: sticky; left: 12px; width: min(1020px, calc(100vw - 58px)); }
+.detail-grid { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 12px; }
+.detail-block { background: var(--card); border: 1px solid var(--border); border-radius: 8px; padding: 10px 12px; margin-bottom: 10px; }
+.detail-block > b, .detail-block .row-between > b { display: block; margin-bottom: 6px; }
+.pos-form { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; }
+.pos-form label { margin: 0; }
+.concerns { margin: 0; padding-left: 0; list-style: none; }
+.concerns li { margin: 4px 0; }
+.metrics-all { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 8px 16px; align-content: start; }
+.mgroup .mrow { display: flex; justify-content: space-between; gap: 8px; font-size: 13px; padding: 2px 0; border-bottom: 1px dotted var(--border); }
+.spark { width: 100%; height: 70px; display: block; }
+.spark polyline { fill: none; stroke-width: 1.5; vector-effect: non-scaling-stroke; }
+.spark polyline.up { stroke: var(--bull); } .spark polyline.down { stroke: var(--bear); }
+.spark .cost-line { stroke: var(--muted); stroke-dasharray: 4 3; stroke-width: 1; vector-effect: non-scaling-stroke; }
+.report-sections { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 6px; margin: 8px 0; }
+.drop { margin: 6px 0; font-size: 13px; }
+.trade-summary p { margin: 6px 0; }
+.trade-summary ol { margin: 4px 0; padding-left: 20px; }
+.trade { margin-bottom: 10px; }
+.th-input { width: 6em; padding: 2px 6px; }
+#pf-concerns td { vertical-align: middle; white-space: normal; }
+#pf-concerns label.check { margin: 0; white-space: nowrap; }
+@media (max-width: 760px) {
+  .detail-grid { grid-template-columns: 1fr; }
+  .pos-form { grid-template-columns: 1fr 1fr; }
+  .event-row { grid-template-columns: auto 1fr; }
+  .event-row .event-sum { grid-column: 1 / -1; }
+  .data-toolbar #btn-prefs { margin-left: 0; }
+  .data-overview .stats { grid-template-columns: 1fr 1fr; }
+}

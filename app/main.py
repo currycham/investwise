@@ -9,7 +9,7 @@ from fastapi.responses import FileResponse, PlainTextResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
-from . import admin, analyzer, digest, llm, notify, parser, thinking
+from . import admin, analyzer, digest, llm, notify, parser, portfolio, profile, thinking
 from .auth import current_user, hash_pw, login_session, user_from_session, verify_pw
 from .config import ADMIN_USERNAMES, BASE_DIR, DAILY_RUN_TIME, INVITE_CODE, TIMEZONE
 from .db import alert_condition, get_conn, init_db, needs_judgment, thesis_text
@@ -33,6 +33,8 @@ async def lifespan(_app):
 app = FastAPI(title="InvestWise", lifespan=lifespan)
 app.include_router(admin.router)
 app.include_router(thinking.router)
+app.include_router(profile.router)
+app.include_router(portfolio.router)
 
 
 # ---------- 认证 ----------
@@ -138,6 +140,7 @@ class CompanyIn(BaseModel):
     assumptions: str = Field(default="", max_length=2000)  # 关键假设
     wrong_if: str = Field(default="", max_length=2000)     # 什么情况说明我错了
     horizon: str = Field(default="", max_length=32)        # 计划持有
+    status: str = Field(default="holding", pattern="^(holding|watching)$")  # 新加入的公司：持仓中 / 观察中
 
     def thesis_values(self) -> tuple[str, str, str, str]:
         return self.thesis.strip(), self.assumptions.strip(), self.wrong_if.strip(), self.horizon.strip()
@@ -183,9 +186,9 @@ def add_company(body: CompanyIn, user: dict = Depends(current_user)):
     market, ticker = _normalized(body)
     with get_conn() as conn:
         cur = conn.execute(
-            "INSERT OR IGNORE INTO companies (user_id, name, ticker, market, thesis, assumptions, wrong_if, horizon)"
-            " VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
-            (user["id"], body.name.strip(), ticker, market, *body.thesis_values()),
+            "INSERT OR IGNORE INTO companies (user_id, name, ticker, market, thesis, assumptions, wrong_if, horizon,"
+            " status) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            (user["id"], body.name.strip(), ticker, market, *body.thesis_values(), body.status),
         )
         if not cur.rowcount:
             raise HTTPException(409, "已在列表中")
@@ -249,9 +252,9 @@ def import_confirm(body: ImportConfirm, user: dict = Depends(current_user)):
             if not norm:
                 continue
             cur = conn.execute(
-                "INSERT OR IGNORE INTO companies (user_id, name, ticker, market, thesis, assumptions, wrong_if, horizon)"
-                " VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
-                (user["id"], c.name.strip(), norm[1], norm[0], *c.thesis_values()),
+                "INSERT OR IGNORE INTO companies (user_id, name, ticker, market, thesis, assumptions, wrong_if, horizon,"
+                " status) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                (user["id"], c.name.strip(), norm[1], norm[0], *c.thesis_values(), c.status),
             )
             if cur.rowcount:
                 added.append(cur.lastrowid)
@@ -270,7 +273,7 @@ def _item_out(r) -> dict:
     d["needs_judgment"] = bool(d.get("needs_judgment"))
     if d["needs_judgment"]:  # 先判断，再看 AI：用户判断之前不下发 AI 的结论
         d.update(direction="", score=0, confidence=0, horizon="", frameworks={}, reasoning="", watch_points=[],
-                 thesis_impact="", thesis_note="", thesis_broken=0)
+                 thesis_impact="", thesis_note="", thesis_broken=0, profile_note="")
     return d
 
 
@@ -287,7 +290,7 @@ def timeline(company_id: int, days: int = 90, user: dict = Depends(current_user)
                 f"SELECT ri.*, {alert_condition()} AS is_alert, {needs_judgment()} AS needs_judgment,"
                 " j.verdict AS my_verdict FROM report_items ri JOIN users u ON u.id = ?"
                 " LEFT JOIN item_judgments j ON j.item_id = ri.id"
-                " WHERE ri.report_id = ? ORDER BY ABS(ri.score) DESC",
+                " WHERE ri.report_id = ? ORDER BY ABS(ri.score) * (0.5 + ri.relevance) DESC",  # 按画像相关度调整排序
                 (user["id"], rep["id"])).fetchall()
             out.append({"date": rep["report_date"], "day_summary": rep["day_summary"],
                         "items": [_item_out(i) for i in items]})

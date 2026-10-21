@@ -49,3 +49,5 @@ DEFAULT_ALERT_THRESHOLD = 6      # |score| >= 阈值 触发预警
 ALERT_MIN_CONFIDENCE = 0.6       # 置信度低于此值不预警（逻辑被证伪除外）
 NEWS_LOOKBACK_HOURS = 36         # 每日检索回看的时间窗口
 BACKFILL_DAYS = 7                # 新增/更换持仓后立即回溯的天数
+# 单日跌幅达到这个百分比时预警并分析原因（按 T-1 收盘判定）
+DROP_ALERT_PCT = float(os.getenv("DROP_ALERT_PCT", "5"))

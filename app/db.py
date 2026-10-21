@@ -131,6 +131,86 @@ CREATE TABLE IF NOT EXISTS decisions (
     created_at TEXT DEFAULT CURRENT_TIMESTAMP
 );
 CREATE INDEX IF NOT EXISTS idx_decisions_user ON decisions (user_id, review_on);
+-- 行情与财务：按 (市场, 代码) 共享，每天更新
+CREATE TABLE IF NOT EXISTS stock_prices (
+    market TEXT NOT NULL,
+    ticker TEXT NOT NULL,
+    date TEXT NOT NULL,
+    close REAL NOT NULL,
+    change_pct REAL,
+    PRIMARY KEY (market, ticker, date)
+);
+CREATE TABLE IF NOT EXISTS stock_data (
+    market TEXT NOT NULL,
+    ticker TEXT NOT NULL,
+    industry TEXT DEFAULT '',
+    currency TEXT DEFAULT '',          -- 股价币种
+    fin_currency TEXT DEFAULT '',      -- 财报币种（港股公司常用人民币报告）
+    metrics_json TEXT DEFAULT '{{}}',  -- 最新价格、估值、分位、股息率、ROE 等
+    annual_json TEXT DEFAULT '[]',     -- 近十年年度财务
+    latest_json TEXT DEFAULT 'null',   -- 最新一期报告
+    latest_report TEXT DEFAULT '',     -- 最新报告期，用于发现新财报
+    us_prefix TEXT DEFAULT '',         -- 东方财富美股交易所前缀
+    error TEXT DEFAULT '',
+    updated_at TEXT,
+    fin_updated_at TEXT,
+    PRIMARY KEY (market, ticker)
+);
+CREATE TABLE IF NOT EXISTS fx_rates (
+    currency TEXT NOT NULL,
+    date TEXT NOT NULL,
+    rate REAL NOT NULL,                -- 人民币 / 1 单位外币
+    PRIMARY KEY (currency, date)
+);
+-- 暴跌、新财报等事件；暴跌原因分析与用户无关，多人共用
+CREATE TABLE IF NOT EXISTS stock_events (
+    id INTEGER PRIMARY KEY,
+    market TEXT NOT NULL,
+    ticker TEXT NOT NULL,
+    kind TEXT NOT NULL CHECK (kind IN ('drop', 'report')),
+    event_date TEXT NOT NULL,
+    title TEXT NOT NULL,
+    data_json TEXT DEFAULT '{{}}',
+    analysis_json TEXT DEFAULT '',
+    created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE (market, ticker, kind, event_date)
+);
+-- 新财报的十年价值分析：结合用户画像和投资逻辑，按持仓生成
+CREATE TABLE IF NOT EXISTS report_analyses (
+    id INTEGER PRIMARY KEY,
+    company_id INTEGER NOT NULL REFERENCES companies(id) ON DELETE CASCADE,
+    period TEXT NOT NULL,
+    content_json TEXT NOT NULL,
+    created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE (company_id, period)
+);
+-- 清仓记录：获利了结 / 止损出局，附这笔投资期间的总结
+CREATE TABLE IF NOT EXISTS closed_trades (
+    id INTEGER PRIMARY KEY,
+    user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    company_id INTEGER NOT NULL REFERENCES companies(id) ON DELETE CASCADE,
+    outcome TEXT NOT NULL CHECK (outcome IN ('获利了结', '止损出局')),
+    shares REAL,
+    cost_price REAL,
+    sell_price REAL,
+    currency TEXT DEFAULT '',
+    opened_at TEXT DEFAULT '',
+    closed_at TEXT NOT NULL,
+    pnl REAL,                          -- 盈亏额（本币），只在填了份额时有
+    pnl_pct REAL,
+    note TEXT DEFAULT '',
+    summary_json TEXT DEFAULT '',
+    created_at TEXT DEFAULT CURRENT_TIMESTAMP
+);
+-- 数据概览：每个用户每天一条
+CREATE TABLE IF NOT EXISTS user_data_digests (
+    user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    digest_date TEXT NOT NULL,
+    overview TEXT DEFAULT '',
+    points_json TEXT DEFAULT '[]',
+    updated_at TEXT DEFAULT CURRENT_TIMESTAMP,
+    PRIMARY KEY (user_id, digest_date)
+);
 CREATE TABLE IF NOT EXISTS chat_messages (
     id INTEGER PRIMARY KEY,
     company_id INTEGER NOT NULL REFERENCES companies(id) ON DELETE CASCADE,
@@ -178,6 +258,20 @@ MIGRATIONS = [
     ("companies", "horizon", "TEXT NOT NULL DEFAULT ''"),
     ("report_items", "thesis_note", "TEXT NOT NULL DEFAULT ''"),  # 触及了哪条假设 / 证伪条件
     ("users", "judge_first_at", "TEXT"),  # 开启「先判断，再看 AI」的时间，之后入库的信息先隐藏 AI 判断
+    # 股票池与仓位：holding 持仓中 / watching 观察中 / closed 投过的（清仓后停止跟踪）
+    ("companies", "status", "TEXT NOT NULL DEFAULT 'holding'"),
+    ("companies", "shares", "REAL"),
+    ("companies", "cost_price", "REAL"),
+    ("companies", "manual_weight", "REAL"),  # 不想填份额时，直接填仓位权重（%）
+    ("companies", "opened_at", "TEXT NOT NULL DEFAULT ''"),
+    # 投资画像
+    ("users", "profile_tags_json", "TEXT NOT NULL DEFAULT '[]'"),
+    ("users", "profile_statement", "TEXT NOT NULL DEFAULT ''"),
+    ("users", "profile_json", "TEXT NOT NULL DEFAULT ''"),
+    ("users", "profile_at", "TEXT"),
+    ("users", "data_prefs_json", "TEXT NOT NULL DEFAULT ''"),  # 数据页的指标列、关注点规则、仓位填写方式
+    ("report_items", "profile_note", "TEXT NOT NULL DEFAULT ''"),  # 从用户的投资风格看这条信息
+    ("report_items", "relevance", "REAL NOT NULL DEFAULT 0.5"),    # 与用户画像的相关度，用于排序
 ]
 
 

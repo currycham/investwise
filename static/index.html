@@ -70,20 +70,33 @@
 
   <section id="reviews" class="reviews hidden"></section>
 
-  <section id="digest" class="digest hidden"></section>
+  <nav class="tabs" id="tabs">
+    <button data-tab="profile">我的画像</button>
+    <button data-tab="news" class="on">资讯</button>
+    <button data-tab="data">数据</button>
+  </nav>
 
-  <section id="alerts" class="alerts hidden">
-    <h2>⚠ 近7天预警</h2>
-    <div id="alerts-list"></div>
-  </section>
+  <div id="tab-profile" class="tab hidden"></div>
 
-  <section class="companies">
-    <div class="section-head">
-      <h2>我的持仓 <span id="company-count" class="muted"></span></h2>
-      <button id="btn-add" class="ghost">＋ 添加单个</button>
-    </div>
-    <div id="company-list"></div>
-  </section>
+  <div id="tab-news" class="tab">
+    <section id="digest" class="digest hidden"></section>
+
+    <section id="alerts" class="alerts hidden">
+      <h2>⚠ 近7天预警</h2>
+      <div id="alerts-list"></div>
+    </section>
+
+    <section class="companies">
+      <div class="section-head">
+        <h2>我关注的公司 <span id="company-count" class="muted"></span></h2>
+        <div class="chips" id="news-pool"></div>
+        <button id="btn-add" class="ghost">＋ 添加单个</button>
+      </div>
+      <div id="company-list"></div>
+    </section>
+  </div>
+
+  <div id="tab-data" class="tab hidden"></div>
 
   <p class="disclaimer">本工具仅做信息整理与思考辅助，AI 评分不构成投资建议。</p>
 </main>
@@ -100,7 +113,9 @@
 
   <h2 class="guide-h">怎么用</h2>
   <ol class="guide-steps">
-    <li><b>导入持仓。</b>点「导入公司」，粘贴任意格式的列表（如「茅台、腾讯 00700、AAPL」）或上传 Excel，AI 识别后你核对一遍即可。支持 A股、港股、美股。</li>
+    <li><b>导入持仓。</b>点「导入公司」，粘贴任意格式的列表（如「茅台、腾讯 00700、AAPL」）或上传 Excel，AI 识别后你核对一遍即可。支持 A股、港股、美股。还没买、只是在看的公司，添加时选「观察中」。</li>
+    <li><b>生成你的投资画像。</b>在「我的画像」选几个你认同的标签（价值投资、长线、巴菲特……），用自己的话写几句理念。AI 会结合你的持仓、投资逻辑、决策记录，总结你的风格，尤其是<b>"你以为的自己"和"你实际怎么做"</b>不一致的地方。画像决定资讯的解读角度和数据页关注哪些指标。</li>
+    <li><b>在「数据」页看估值和基本面。</b>每家公司的 PE / PB 及历史分位、股息率、ROE、行业等，指标可以自己选；填上买入份额和买入价（或只填仓位权重），自动按每日价格和汇率算市值、盈亏和仓位权重。单日跌超 5%、发布新财报、ROE 下滑或估值过高等关注点会提醒你，并给出原因分析和近十年财报的价值分析。清仓时记下盈亏，AI 帮你写这笔投资的总结。</li>
     <li><b>写下你的投资逻辑（最重要的一步）。</b>点公司旁的「编辑」，分四项写：为什么买、关键假设、什么情况说明我错了、打算拿多久。例如：
       <blockquote>为什么买：白酒龙头，品牌护城河 + 提价能力。<br>关键假设：批价稳定在出厂价之上；渠道库存不持续上升。<br>什么情况说明我错了：批价连续 3 个月跌破出厂价。</blockquote>
       写得越具体，AI 越能判断新信息碰到了哪条假设；写不出来，本身就是一个值得注意的信号。写完可以点「投资逻辑体检」，让 AI 挑毛病（它只提问，不替你写）。</li>
@@ -146,6 +161,52 @@
   </div>
 </dialog>
 
+<!-- 清仓 -->
+<dialog id="dlg-close">
+  <h3>清仓：<span id="cl-company"></span></h3>
+  <div id="cl-form">
+    <p class="muted small">清仓后这家公司移到「投过的」股票池，停止每日跟踪。AI 会结合你当时的投资逻辑、持有期间的决策和信息，帮你写这笔投资的总结。</p>
+    <div class="chips" id="cl-outcome"></div>
+    <div class="two-col">
+      <label>买入价<input id="cl-cost" type="number" step="any" min="0"></label>
+      <label>卖出价<input id="cl-sell" type="number" step="any" min="0"></label>
+    </div>
+    <div class="two-col">
+      <label>买入日期<input id="cl-opened" type="date"></label>
+      <label>清仓日期<input id="cl-closed" type="date"></label>
+    </div>
+    <p id="cl-pnl" class="muted small"></p>
+    <label>回头看，这笔投资你最大的收获或教训是什么？
+      <textarea id="cl-note" rows="3" placeholder="例如：买入逻辑是渠道改革，结果两年都没兑现；我拿着的理由从'逻辑'变成了'不想认亏'。"></textarea>
+    </label>
+    <p id="cl-error" class="error"></p>
+    <div class="dlg-actions">
+      <button data-close>取消</button>
+      <button id="cl-save" class="primary">清仓并生成总结</button>
+    </div>
+  </div>
+  <div id="cl-result" class="hidden"></div>
+</dialog>
+
+<!-- 数据页设置 -->
+<dialog id="dlg-prefs" class="wide">
+  <div class="row-between"><h3>指标与关注点</h3><button data-close class="ghost">✕</button></div>
+  <h4>仓位怎么填</h4>
+  <label class="check"><input type="radio" name="pmode" value="shares"> 填买入份额和买入价：自动按每日价格和汇率算市值、盈亏和仓位权重</label>
+  <label class="check"><input type="radio" name="pmode" value="weight"> 只填仓位权重（不想记具体持股数量时）：可再填买入价，按涨跌估算现在的权重</label>
+  <h4>表格显示哪些指标</h4>
+  <div id="pf-metrics"></div>
+  <h4>监控哪些关注点</h4>
+  <p class="muted small">开启的规则会在每家公司上判定，触发时在表格和概览里提示。阈值可以按自己的标准改。</p>
+  <div id="pf-concerns" class="tbl"></div>
+  <p id="pr-error" class="error"></p>
+  <div class="dlg-actions">
+    <button id="pr-reset" class="ghost">恢复为画像推荐</button>
+    <button data-close>取消</button>
+    <button id="pr-save" class="primary">保存</button>
+  </div>
+</dialog>
+
 <!-- 我的思考 -->
 <dialog id="dlg-thinking" class="wide">
   <div class="row-between"><h3>我的思考</h3><button data-close class="ghost">✕</button></div>
@@ -184,12 +245,17 @@
   <h3 id="company-dlg-title">添加公司</h3>
   <label>名称<input id="cf-name"></label>
   <label>代码<input id="cf-ticker" placeholder="600519 / 00700 / AAPL"></label>
-  <label>市场
-    <select id="cf-market">
-      <option value="">自动识别</option><option value="A">A股</option>
-      <option value="HK">港股</option><option value="US">美股</option>
-    </select>
-  </label>
+  <div class="two-col">
+    <label>市场
+      <select id="cf-market">
+        <option value="">自动识别</option><option value="A">A股</option>
+        <option value="HK">港股</option><option value="US">美股</option>
+      </select>
+    </label>
+    <label id="cf-status-wrap">放进哪个池子
+      <select id="cf-status"><option value="holding">持仓中</option><option value="watching">观察中（还没买）</option></select>
+    </label>
+  </div>
   <fieldset class="thesis-form">
     <legend>我的投资逻辑 <span class="muted small">可选，强烈建议填写。AI 会拿每天的新信息逐条对照</span></legend>
     <label>为什么买
@@ -261,5 +327,7 @@
 </aside>
 
 <script src="/static/app.js"></script>
+<script src="/static/profile.js"></script>
+<script src="/static/data.js"></script>
 </body>
 </html>
