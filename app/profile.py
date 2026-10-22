@@ -10,7 +10,7 @@ from pydantic import BaseModel, Field
 
 from . import llm
 from .auth import current_user
-from .catalog import ALL_TAGS, CONCERNS, DEFAULT_CONCERNS, DEFAULT_METRICS, METRICS, catalog_out
+from .catalog import ALL_TAGS, CONCERNS, DEFAULT_CONCERNS, DEFAULT_METRICS, METRICS, RENAMED_METRICS, catalog_out
 from .db import get_conn, thesis_text
 from .prompts import PROFILE_SYSTEM
 
@@ -22,7 +22,8 @@ MARKET = {"A": "A股", "HK": "港股", "US": "美股"}
 
 def prefs(user: dict) -> dict:
     saved = json.loads(user.get("data_prefs_json") or "{}")
-    metrics = [k for k in saved.get("metrics") or DEFAULT_METRICS if k in METRICS]
+    metrics = [k for k in dict.fromkeys(RENAMED_METRICS.get(k, k) for k in saved.get("metrics") or DEFAULT_METRICS)
+               if k in METRICS]
     saved_concerns = saved.get("concerns")
     concerns = {}
     for k, (_, _, threshold, _, _) in CONCERNS.items():

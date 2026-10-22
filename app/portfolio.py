@@ -576,7 +576,8 @@ def generate_report_analysis(company: dict, force: bool = False) -> dict:
         f"毛利率 {_pct(lt.get('gross_margin'))}，净利率 {_pct(lt.get('net_margin'))}，负债率 {_pct(lt.get('debt_ratio'))}",
         f"## 近十年年度财务\n{_annual_table(stock['annual'])}",
         f"## 当前估值\nPE（TTM）{m.get('pe') or '—'}，历史分位 {_pct(m.get('pe_pct'))}；PB {m.get('pb') or '—'}，"
-        f"历史分位 {_pct(m.get('pb_pct'))}；股息率 {_pct(m.get('dividend_yield'))}；自由现金流收益率 {_pct(m.get('fcf_yield'))}",
+        f"历史分位 {_pct(m.get('pb_pct'))}；股息率 {_pct(m.get('dividend_yield'))}；市值 / 自由现金流 {m.get('p_fcf') or '—'}；"
+        f"自由现金流 / 净利润 {m.get('fcf_np') or '—'}",
         f"## 用户的投资画像\n{profile.brief(user) or '未提供'}",
         f"## 用户的投资逻辑\n{thesis_text(company) or '未提供'}",
     ])

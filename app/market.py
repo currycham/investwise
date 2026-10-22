@@ -388,9 +388,12 @@ def _derive(m: dict, annual: list[dict], latest: dict | None, fx: dict, price_cc
     if fy.get("ocf") is not None and fy.get("net_profit"):
         m["ocf_np"] = round(fy["ocf"] / fy["net_profit"], 2)
     m["fcf"] = fy.get("fcf")
-    if fy.get("fcf") is not None and m.get("market_cap"):
+    # 净利润或自由现金流 ≤ 0 时比值没有意义，留空
+    if fy.get("fcf") is not None and fy.get("net_profit") and fy["net_profit"] > 0:
+        m["fcf_np"] = round(fy["fcf"] / fy["net_profit"], 2)
+    if fy.get("fcf") and fy["fcf"] > 0 and m.get("market_cap"):
         fin_rate = fx.get(fin_ccy or price_ccy, 1.0)
-        m["fcf_yield"] = round(fy["fcf"] * fin_rate / (m["market_cap"] * fx.get(price_ccy, 1.0)) * 100, 2)
+        m["p_fcf"] = round(m["market_cap"] * fx.get(price_ccy, 1.0) / (fy["fcf"] * fin_rate), 2)
     # PEG 用近 3 年净利润复合增速：单期同比波动太大
     profits = [r.get("net_profit") for r in annual[-4:]]
     if len(profits) == 4 and all(p and p > 0 for p in profits):
