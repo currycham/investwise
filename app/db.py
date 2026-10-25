@@ -271,6 +271,7 @@ MIGRATIONS = [
     ("companies", "cost_price", "REAL"),
     ("companies", "manual_weight", "REAL"),  # 不想填份额时，直接填仓位权重（%）
     ("companies", "opened_at", "TEXT NOT NULL DEFAULT ''"),
+    ("companies", "lots_json", "TEXT NOT NULL DEFAULT '[]'"),  # 每笔买入 / 卖出；上面三列由它汇总
     # 投资画像
     ("users", "profile_tags_json", "TEXT NOT NULL DEFAULT '[]'"),
     ("users", "profile_statement", "TEXT NOT NULL DEFAULT ''"),

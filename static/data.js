@@ -310,18 +310,33 @@ function positionForm(r) {
   const mode = state.data.prefs.position_mode;
   return `<div class="detail-block">
     <div class="row-between"><b>我的仓位</b><span class="muted small">${mode === "shares" ? "按份额" : "只填权重"} · 可在「⚙ 指标与关注点」切换</span></div>
-    <div class="pos-form">
-      ${mode === "shares" ? `<label>持有份额（股）<input data-pos="shares" type="number" step="any" min="0" value="${r.shares ?? ""}"></label>`
-        : `<label>仓位权重（%）<input data-pos="manual_weight" type="number" step="any" min="0" max="100" value="${r.manual_weight ?? ""}"></label>`}
-      <label>买入价（${r.currency}）<input data-pos="cost_price" type="number" step="any" min="0" value="${r.cost_price ?? ""}"></label>
-      <label>买入日期<input data-pos="opened_at" type="date" value="${esc(r.opened_at || "")}"></label>
+    ${mode === "shares" ? `<div class="lots">
+      <div class="lot lot-head muted small"><span></span><span>份额（股）</span><span>价格（${r.currency}）</span><span>日期</span><span></span></div>
+      ${(r.lots.length ? r.lots : [{ side: "buy" }]).map(lotRow).join("")}
     </div>
+    <div class="row-between"><button class="small ghost" data-add-lot>＋ 再加一笔</button>
+      <span class="muted small">${r.shares ? `合计 ${+r.shares.toFixed(4)} 股${r.cost_price ? `，平均买入价 ${+r.cost_price.toFixed(3)}` : ""}` : ""}</span></div>`
+    : `<div class="pos-form">
+      <label>仓位权重（%）<input data-pos="manual_weight" type="number" step="any" min="0" max="100" value="${r.manual_weight ?? ""}"></label>
+      <label>平均买入价（${r.currency}）<input data-pos="cost_price" type="number" step="any" min="0" value="${r.cost_price ?? ""}"></label>
+      <label>首次买入日期<input data-pos="opened_at" type="date" value="${esc(r.opened_at || "")}"></label>
+    </div>`}
     ${r.pnl != null ? `<p class="small">市值 ${money(r.market_value)}，浮动盈亏 <span class="${signCls(r.pnl)}">${money(r.pnl)}（${r.pnl_pct > 0 ? "+" : ""}${num(r.pnl_pct)}%）</span></p>` : ""}
     <div class="actions">
       <button class="small primary" data-save-pos>保存仓位</button>
       <button class="small" data-close-pos>清仓（获利了结 / 止损出局）</button>
       <button class="small ghost" data-status="watching">移到观察中</button>
     </div>
+  </div>`;
+}
+
+function lotRow(l) {
+  return `<div class="lot">
+    <select data-lot="side" aria-label="买入或卖出"><option value="buy">买入</option><option value="sell"${l.side === "sell" ? " selected" : ""}>卖出</option></select>
+    <input data-lot="shares" type="number" step="any" min="0" aria-label="份额" value="${l.shares ?? ""}">
+    <input data-lot="price" type="number" step="any" min="0" aria-label="价格" value="${l.price ?? ""}">
+    <input data-lot="date" type="date" aria-label="日期" value="${esc(l.date || "")}">
+    <button class="small ghost" data-del-lot title="删除这笔" aria-label="删除这笔">×</button>
   </div>`;
 }
 
@@ -366,8 +381,22 @@ function bindDetail(el, r) {
   el.querySelector("[data-save-pos]")?.addEventListener("click", async (e) => {
     const body = { shares: r.shares, cost_price: r.cost_price, manual_weight: r.manual_weight, opened_at: r.opened_at || "" };
     el.querySelectorAll("[data-pos]").forEach((i) => (body[i.dataset.pos] = i.type === "number" ? (i.value === "" ? null : Number(i.value)) : i.value));
+    const lotEls = [...el.querySelectorAll(".lot:not(.lot-head)")];
+    if (el.querySelector(".lots")) {
+      const val = (row, k) => row.querySelector(`[data-lot=${k}]`).value;
+      body.lots = lotEls.filter((row) => Number(val(row, "shares")) > 0).map((row) => ({
+        side: val(row, "side"), shares: Number(val(row, "shares")), price: val(row, "price") === "" ? null : Number(val(row, "price")), date: val(row, "date") }));
+    }
     e.target.disabled = true;
     try { await api(`/api/companies/${r.id}/position`, { method: "PUT", json: body }); await loadData(); } catch (err) { alert(err.message); e.target.disabled = false; }
+  });
+  el.querySelector("[data-add-lot]")?.addEventListener("click", () => {
+    const box = el.querySelector(".lots");
+    box.insertAdjacentHTML("beforeend", lotRow({ side: "buy" }));
+    box.lastElementChild.querySelector("[data-lot=shares]").focus();
+  });
+  el.querySelector(".lots")?.addEventListener("click", (e) => {
+    if (e.target.matches("[data-del-lot]")) e.target.closest(".lot").remove();
   });
   el.querySelectorAll("[data-status]").forEach((b) => (b.onclick = async () => {
     await api(`/api/companies/${r.id}/status`, { method: "PUT", json: { status: b.dataset.status } });

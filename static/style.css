@@ -351,6 +351,10 @@ dialog h4 { margin: 18px 0 8px; }
 .detail-block > b, .detail-block .row-between > b { display: block; margin-bottom: 6px; }
 .pos-form { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; }
 .pos-form label { margin: 0; }
+.lots { display: grid; gap: 6px; margin-bottom: 6px; }
+.lot { display: grid; grid-template-columns: 4.5em minmax(0, 1fr) minmax(0, 1fr) minmax(0, 1.2fr) 2em; gap: 6px; align-items: center; }
+.lot input, .lot select { margin: 0; min-width: 0; }
+.lot [data-del-lot] { padding: 2px 0; }
 .concerns { margin: 0; padding-left: 0; list-style: none; }
 .concerns li { margin: 4px 0; }
 .metrics-all { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 8px 16px; align-content: start; }

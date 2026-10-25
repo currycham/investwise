@@ -155,7 +155,7 @@ def portfolio(conn, user: dict) -> dict:
             "id": c["id"], "name": c["name"], "ticker": c["ticker"], "market": c["market"], "status": c["status"],
             "industry": (s or {}).get("industry", ""), "currency": ccy, "metrics": m,
             "shares": c["shares"], "cost_price": c["cost_price"], "manual_weight": c["manual_weight"],
-            "opened_at": c["opened_at"], "data_error": (s or {}).get("error", "") if s else "等待首次更新",
+            "opened_at": c["opened_at"], "lots": _lots(c), "data_error": (s or {}).get("error", "") if s else "等待首次更新",
             "data_updated_at": (s or {}).get("updated_at"),
             "concerns": evaluate_concerns(s, p["concerns"], signals.get(c["id"], {})) if c["status"] != "closed" else [],
             "trades": trades.get(c["id"], []),
@@ -178,6 +178,16 @@ def portfolio(conn, user: dict) -> dict:
                 r["metrics"][k] = r[k]
         r["metrics"]["industry"] = r["industry"]
     return {"rows": rows, "fx": fx, "prefs": p, "summary": _summary(rows, p["position_mode"])}
+
+
+def _lots(c: dict) -> list[dict]:
+    """逐笔记录。老数据只有汇总的一条；在「只填权重」模式下改过买入价时，逐笔记录和汇总对不上，也退回汇总。"""
+    lots = json.loads(c.get("lots_json") or "[]")
+    if lots and summarize_lots(lots)[:2] == (c["shares"], c["cost_price"]):
+        return lots
+    if c["shares"]:
+        return [{"side": "buy", "shares": c["shares"], "price": c["cost_price"], "date": c["opened_at"] or ""}]
+    return []
 
 
 def _weights(holding: list[dict], mode: str) -> None:
@@ -313,20 +323,60 @@ def company_data(company_id: int, user: dict = Depends(current_user)):
             "analyses": analyses, "thesis": thesis_text(c)}
 
 
+class LotIn(BaseModel):
+    side: str = Field(default="buy", pattern="^(buy|sell)$")
+    shares: float = Field(gt=0)
+    price: float | None = Field(default=None, ge=0)
+    date: str = Field(default="", max_length=10)
+
+
 class PositionIn(BaseModel):
     shares: float | None = Field(default=None, ge=0)
     cost_price: float | None = Field(default=None, ge=0)
     manual_weight: float | None = Field(default=None, ge=0, le=100)
     opened_at: str = Field(default="", max_length=10)
+    lots: list[LotIn] | None = Field(default=None, max_length=200)  # 按份额填时的逐笔记录
+
+
+def summarize_lots(lots: list[dict]) -> tuple[float | None, float | None, str]:
+    """逐笔记录 → (持有份额, 平均买入价, 首次买入日期)。按日期顺序用移动加权平均：
+    买入摊进成本，卖出只减份额不改成本；卖光后再买重新算。没填价格的买入不参与成本。"""
+    shares = cost_shares = cost = 0.0
+    opened = ""
+    for lot in sorted(lots, key=lambda x: x.get("date") or "9999"):
+        n, price = lot["shares"], lot.get("price")
+        if lot.get("side") == "sell":
+            if n > shares + 1e-9:
+                raise HTTPException(400, f"{lot.get('date') or '未填日期'} 卖出 {n:g} 股，超过当时持有的 {shares:g} 股")
+            ratio = (shares - n) / shares
+            shares, cost_shares, cost = shares - n, cost_shares * ratio, cost * ratio
+            continue
+        if shares <= 1e-9:
+            cost_shares = cost = 0.0
+            opened = lot.get("date") or ""
+        shares += n
+        if price:
+            cost_shares += n
+            cost += n * price
+        opened = opened or lot.get("date") or ""
+    if shares <= 1e-9:
+        return None, None, ""
+    return round(shares, 6), round(cost / cost_shares, 4) if cost_shares else None, opened
 
 
 @router.put("/companies/{company_id}/position")
 def update_position(company_id: int, body: PositionIn, user: dict = Depends(current_user)):
     with get_conn() as conn:
         _own_company(conn, company_id, user["id"])
-        conn.execute("UPDATE companies SET shares = ?, cost_price = ?, manual_weight = ?, opened_at = ? WHERE id = ?",
-                     (body.shares or None, body.cost_price or None, body.manual_weight or None, body.opened_at.strip(),
-                      company_id))
+        if body.lots is not None:
+            lots = [{**lot.model_dump(), "date": lot.date.strip()} for lot in body.lots]
+            shares, cost_price, opened_at = summarize_lots(lots)
+            conn.execute("UPDATE companies SET shares = ?, cost_price = ?, opened_at = ?, lots_json = ? WHERE id = ?",
+                         (shares, cost_price, opened_at, json.dumps(lots, ensure_ascii=False), company_id))
+        else:
+            conn.execute("UPDATE companies SET shares = ?, cost_price = ?, manual_weight = ?, opened_at = ? WHERE id = ?",
+                         (body.shares or None, body.cost_price or None, body.manual_weight or None,
+                          body.opened_at.strip(), company_id))
     return {"ok": True}
 
 
@@ -377,7 +427,7 @@ def close_position(company_id: int, body: CloseIn, user: dict = Depends(current_
              market.CURRENCY[c["market"]], c["opened_at"] or c["created_at"][:10], body.closed_at or _today(),
              pnl, pnl_pct, body.note.strip()))
         conn.execute("UPDATE companies SET status = 'closed', shares = NULL, cost_price = NULL, manual_weight = NULL,"
-                     " opened_at = '' WHERE id = ?", (company_id,))
+                     " opened_at = '', lots_json = '[]' WHERE id = ?", (company_id,))
     return {"trade_id": cur.lastrowid, "pnl": pnl, "pnl_pct": pnl_pct}
 
 
