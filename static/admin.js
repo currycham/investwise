@@ -87,7 +87,7 @@ async function viewUsers() {
           <button class="small ${u.banned ? "" : "danger"}" data-act="ban" data-id="${u.id}" data-banned="${u.banned ? 0 : 1}" data-name="${esc(u.name)}">${u.banned ? "恢复" : "停用"}</button>
         </td>
       </tr>`))}
-    <p class="muted small">停用会立即踢下线，数据保留。老账号要先在服务器上运行 <code>python -m app.bind_email &lt;用户ID&gt; &lt;邮箱&gt;</code> 绑定登录邮箱。</p>`;
+    <p class="muted small">停用会立即踢下线，数据保留。老账号要先在服务器上运行 <code>python -m app.bind_email &lt;用户ID&gt; &lt;邮箱&gt;</code> 绑定登录邮箱（命令见 README）。</p>`;
 }
 
 const userActions = {

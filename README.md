@@ -169,6 +169,9 @@ cp .env.example .env        # 填写 API Key 和邀请码
 
 ```bash
 python -m app.bind_email <用户ID> <邮箱>
+# 服务器上数据库路径写在 systemd 里，不在 .env 里，要带上：
+cd /srv/investwise/app && sudo -u investwise env DB_PATH=/srv/investwise/data/investwise.db \
+  /srv/investwise/venv/bin/python -m app.bind_email <用户ID> <邮箱>
 ```
 
 | 变量 | 用途 | 是否必需 |
