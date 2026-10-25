@@ -32,30 +32,34 @@ $("#guide-close").onclick = () => $("#guide").classList.add("hidden");
 document.querySelectorAll("[data-open]").forEach((b) => (b.onclick = () => $(b.dataset.open === "import" ? "#btn-import" : "#btn-add").click()));
 
 // ---------- 登录 ----------
-let registering = false;
 function showAuth() { $("#auth").classList.remove("hidden"); $("#app").classList.add("hidden"); }
-$("#auth-toggle").onclick = (e) => {
-  e.preventDefault();
-  registering = !registering;
-  $("#auth-invite").classList.toggle("hidden", !registering || !inviteRequired);
-  $("#auth-submit").textContent = $("#auth-title").textContent = registering ? "注册" : "登录";
-  $("#auth-toggle").textContent = registering ? "已有账号？登录" : `没有账号？注册${inviteRequired ? "（需要邀请码）" : ""}`;
+let resendTimer = null;
+$("#auth-send").onclick = async () => {
+  $("#auth-error").textContent = "";
+  const btn = $("#auth-send");
+  btn.disabled = true;
+  try {
+    await api("/api/login/code", { json: { email: $("#auth-email").value.trim(), invite_code: $("#auth-invite").value.trim() } });
+  } catch (e) { $("#auth-error").textContent = e.message; btn.disabled = false; return; }
+  $("#auth-to").textContent = $("#auth-email").value.trim();
+  $("#auth-step2").classList.remove("hidden");
+  $("#auth-code").focus();
+  let left = 60;
+  clearInterval(resendTimer);
+  const tick = () => { btn.textContent = left > 0 ? `重新发送（${left}）` : "重新发送"; btn.disabled = left-- > 0; };
+  tick();
+  resendTimer = setInterval(() => { tick(); if (left < 0) clearInterval(resendTimer); }, 1000);
 };
 $("#auth-submit").onclick = async () => {
   $("#auth-error").textContent = "";
   try {
-    await api(registering ? "/api/register" : "/api/login", {
-      json: { username: $("#auth-user").value.trim(), password: $("#auth-pass").value, invite_code: $("#auth-invite").value.trim() },
-    });
+    await api("/api/login/verify", { json: { email: $("#auth-email").value.trim(), code: $("#auth-code").value.trim() } });
     boot();
   } catch (e) { $("#auth-error").textContent = e.message; }
 };
-let inviteRequired = true;
-api("/api/public-config").then((c) => {
-  inviteRequired = c.invite_required;
-  if (!inviteRequired) $("#auth-toggle").textContent = "没有账号？注册";
-}).catch(() => {});
-$("#auth-pass").onkeydown = (e) => { if (e.key === "Enter") $("#auth-submit").click(); };
+$("#auth-email").onkeydown = (e) => { if (e.key === "Enter") $("#auth-send").click(); };
+$("#auth-code").onkeydown = (e) => { if (e.key === "Enter") $("#auth-submit").click(); };
+api("/api/public-config").then((c) => $("#auth-invite").classList.toggle("hidden", !c.invite_required)).catch(() => {});
 $("#btn-logout").onclick = async () => { await api("/api/logout", { method: "POST" }); showAuth(); };
 
 // ---------- 标签页：我的画像 / 资讯 / 数据 ----------
@@ -163,7 +167,7 @@ function renderCompanies() {
   // 还没有持仓：显示欢迎和使用说明；加入公司后说明自动收起，可从顶栏「使用说明」再打开
   const empty = state.companies.length === 0;
   $("#welcome").classList.toggle("hidden", !empty);
-  $("#welcome-name").textContent = state.me.username;
+  $("#welcome-name").textContent = state.me.name;
   if (empty) $("#guide").classList.remove("hidden");
   else if (renderCompanies.wasEmpty) $("#guide").classList.add("hidden");
   renderCompanies.wasEmpty = empty;
@@ -417,6 +421,9 @@ $("#cf-review").onclick = async () => {
 
 // ---------- 设置 ----------
 $("#btn-settings").onclick = () => {
+  $("#nick").value = state.me.nickname || "";
+  $("#nick").placeholder = (state.me.login_email || "").split("@")[0];
+  $("#login-email").textContent = state.me.login_email || "";
   $("#th-range").value = state.me.alert_threshold;
   $("#th-val").textContent = state.me.alert_threshold;
   $("#jf-on").checked = state.me.judge_first;
@@ -439,12 +446,12 @@ $("#em-test").onclick = async () => {
 };
 $("#th-range").oninput = () => ($("#th-val").textContent = $("#th-range").value);
 $("#th-save").onclick = async () => {
-  const body = { alert_threshold: Number($("#th-range").value), email: $("#em-addr").value.trim(),
+  const body = { nickname: $("#nick").value.trim(), alert_threshold: Number($("#th-range").value), email: $("#em-addr").value.trim(),
     email_alerts: $("#em-on").checked, judge_first: $("#jf-on").checked };
   try {
     await api("/api/settings", { method: "PUT", json: body });
   } catch (e) { $("#em-error").textContent = /pattern|string/i.test(e.message) ? "邮箱格式不对" : e.message; return; }
-  Object.assign(state.me, body);
+  Object.assign(state.me, body, { name: body.nickname || (state.me.login_email || "").split("@")[0] });
   $("#dlg-settings").close();
   refresh();
 };

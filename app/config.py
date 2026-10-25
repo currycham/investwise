@@ -16,8 +16,8 @@ SEC_USER_AGENT = os.getenv("SEC_USER_AGENT", "InvestWise admin@example.com")
 
 # 注册邀请码；留空表示开放注册（内测期间）
 INVITE_CODE = os.getenv("INVITE_CODE", "").strip()
-# 这些用户名注册或启动时自动成为管理员（逗号分隔）；其他管理员可在后台设置
-ADMIN_USERNAMES = [u.strip() for u in os.getenv("ADMIN_USERNAMES", "").split(",") if u.strip()]
+# 登录邮箱在这里的用户是管理员（逗号分隔）；其他管理员可在后台设置
+ADMIN_EMAILS = [e.strip().lower() for e in os.getenv("ADMIN_EMAILS", "").split(",") if e.strip()]
 
 # DeepSeek 单价（元 / 百万 tokens），只用于后台成本估算，以控制台账单为准
 DEEPSEEK_PRICE_INPUT = float(os.getenv("DEEPSEEK_PRICE_INPUT", "2"))

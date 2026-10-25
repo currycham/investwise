@@ -1,21 +1,93 @@
+"""邮箱验证码登录。没有密码；新邮箱第一次登录时就是注册，设置了邀请码时要填邀请码。"""
 import hashlib
+import hmac
+import logging
+import re
 import secrets
 
 from fastapi import Cookie, Depends, HTTPException, Response
 
-from .config import INACTIVE_DAYS
+from . import notify
+from .config import ADMIN_EMAILS, INACTIVE_DAYS, INVITE_CODE, SITE_URL
 from .db import get_conn
 
+log = logging.getLogger(__name__)
+EMAIL_RE = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
+CODE_MINUTES = 10
+CODE_TRIES = 5
 
-def hash_pw(password: str, salt: str | None = None) -> str:
-    salt = salt or secrets.token_hex(16)
-    digest = hashlib.pbkdf2_hmac("sha256", password.encode(), salt.encode(), 200_000).hex()
-    return f"{salt}${digest}"
+
+def _hash(email: str, code: str) -> str:
+    return hashlib.sha256(f"{email}:{code}".encode()).hexdigest()
 
 
-def verify_pw(password: str, stored: str) -> bool:
-    salt, _ = stored.split("$", 1)
-    return secrets.compare_digest(hash_pw(password, salt), stored)
+def normalize_email(email: str) -> str:
+    email = email.strip().lower()
+    if not EMAIL_RE.match(email):
+        raise HTTPException(400, "邮箱格式不对")
+    return email
+
+
+def send_code(email: str, invite: str = "") -> None:
+    email = normalize_email(email)
+    with get_conn() as conn:
+        user = conn.execute("SELECT banned FROM users WHERE login_email = ?", (email,)).fetchone()
+        if user and user["banned"]:
+            raise HTTPException(403, "账号已停用，请联系管理员")
+        if not user and INVITE_CODE and invite.strip() != INVITE_CODE and email not in ADMIN_EMAILS:
+            raise HTTPException(403, "新用户注册需要邀请码")
+        # 同一邮箱 60 秒内只能发一次（留几秒余量，免得前端倒计时刚结束就被拒）
+        if conn.execute("SELECT 1 FROM login_codes WHERE email = ? AND sent_at > datetime('now', '-55 seconds')",
+                        (email,)).fetchone():
+            raise HTTPException(429, "验证码刚发过，一分钟后再试")
+        code = f"{secrets.randbelow(10**6):06d}"
+        conn.execute("INSERT OR REPLACE INTO login_codes (email, code_hash, expires_at, tries, sent_at)"
+                     " VALUES (?, ?, datetime('now', ?), 0, CURRENT_TIMESTAMP)",
+                     (email, _hash(email, code), f"+{CODE_MINUTES} minutes"))
+    text = f"你的 InvestWise 登录验证码是：{code}\n\n{CODE_MINUTES} 分钟内有效。如果不是你本人操作，忽略这封邮件即可。\n\n{SITE_URL}"
+    if not notify.enabled():
+        log.warning("SMTP 未配置，验证码只打印到日志：%s %s", email, code)
+        return
+    try:
+        notify.send(email, f"InvestWise 登录验证码 {code}", f"<p>{text}</p>".replace("\n", "<br>"), text)
+    except Exception as e:
+        log.exception("send code failed")
+        raise HTTPException(502, f"验证码发送失败：{e}")
+
+
+def verify_code(email: str, code: str) -> int:
+    """验证通过返回用户 ID；邮箱没注册过就新建账号。"""
+    email = normalize_email(email)
+    with get_conn() as conn:
+        row = conn.execute("SELECT *, expires_at < CURRENT_TIMESTAMP AS expired FROM login_codes WHERE email = ?",
+                           (email,)).fetchone()
+        if not row or row["expired"]:
+            raise HTTPException(400, "验证码已过期，请重新获取")
+        if row["tries"] >= CODE_TRIES:
+            raise HTTPException(429, "试错太多次，请重新获取验证码")
+        wrong = not hmac.compare_digest(row["code_hash"], _hash(email, code.strip()))
+        if wrong:  # 计数要先提交：在 with 里抛异常会回滚
+            conn.execute("UPDATE login_codes SET tries = tries + 1 WHERE email = ?", (email,))
+    if wrong:
+        raise HTTPException(400, "验证码不对")
+    with get_conn() as conn:
+        conn.execute("DELETE FROM login_codes WHERE email = ?", (email,))
+        user = conn.execute("SELECT id, banned FROM users WHERE login_email = ?", (email,)).fetchone()
+        if user and user["banned"]:
+            raise HTTPException(403, "账号已停用，请联系管理员")
+        if user:
+            return user["id"]
+        # 提醒邮箱默认就是登录邮箱，设置里可以改
+        return conn.execute("INSERT INTO users (login_email, email) VALUES (?, ?)", (email, email)).lastrowid
+
+
+def is_admin(user: dict) -> bool:
+    return user["role"] == "admin" or (user["login_email"] or "") in ADMIN_EMAILS
+
+
+def display_name(user: dict) -> str:
+    """页面上显示昵称；没有昵称就显示登录邮箱 @ 前面的部分。"""
+    return user["username"] or (user["login_email"] or "").split("@")[0] or f"用户 {user['id']}"
 
 
 def user_from_session(session: str | None) -> dict | None:
@@ -55,7 +127,7 @@ def _touch(user: dict) -> None:
 
 
 def admin_user(user: dict = Depends(current_user)) -> dict:
-    if user["role"] != "admin":
+    if not is_admin(user):
         raise HTTPException(404, "Not Found")  # 不暴露后台的存在
     return user
 

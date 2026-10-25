@@ -74,7 +74,7 @@
 
 ### 后台管理（仅管理员）
 - **概览**：API 余额、每日预算使用、模型与搜索成本（按环节、按天）、用户与持仓统计、检索队列。
-- **用户**：设为管理员、重置密码、停用 / 恢复；查看每个用户的持仓数、提问数和成本。
+- **用户**：设为管理员、停用 / 恢复；查看每个用户的登录邮箱、持仓数、提问数和成本。
 - **任务**：每次检索的记录、用时和错误；手动触发全站检索。
 - **持仓公司**：全站跟踪的公司与抓取情况，近 7 天没抓到新闻的标黄，可单独回溯。
 
@@ -163,7 +163,13 @@ cp .env.example .env        # 填写 API Key 和邀请码
 .venv/bin/uvicorn app.main:app --port 8000
 ```
 
-打开 http://127.0.0.1:8000 注册（`.env` 里设置了 `INVITE_CODE` 时需要邀请码）。`ADMIN_USERNAMES` 里的用户名注册后自动成为管理员，后台在 `/admin`。
+打开 http://127.0.0.1:8000 用邮箱收验证码登录，第一次登录就是注册（`.env` 里设置了 `INVITE_CODE` 时新用户要填邀请码）。没配 `SMTP_*` 时验证码只打印在服务日志里。登录邮箱在 `ADMIN_EMAILS` 里的是管理员，后台在 `/admin`。
+
+以前用用户名 + 密码注册的老账号，要先绑定登录邮箱，之后用这个邮箱登录就进原来的账号：
+
+```bash
+python -m app.bind_email <用户ID> <邮箱>
+```
 
 | 变量 | 用途 | 是否必需 |
 |---|---|---|
@@ -193,7 +199,8 @@ DEPLOY_HOST=ubuntu@<服务器IP> DEPLOY_KEY=~/.ssh/<你的密钥> deploy/deploy.
 ```
 app/
   main.py      接口与定时任务
-  auth.py      登录、权限、活跃度
+  auth.py      邮箱验证码登录、权限、活跃度
+  bind_email.py 给老账号绑定登录邮箱（命令行）
   admin.py     后台管理接口
   analyzer.py  检索任务队列与流水线（抓取 → 过滤打分 → 归档）
   sources.py   数据源（AKShare / Finnhub / SEC / 博查）
@@ -202,7 +209,7 @@ app/
   prompts.py   识别、打分、概览、提问助手的提示词
   llm.py       DeepSeek 调用（JSON 修复与重试、记账）
   costs.py     成本记账与每日预算
-  notify.py    预警邮件
+  notify.py    发信（登录验证码、预警邮件）
   thinking.py  投资逻辑体检、先判断再看 AI、决策日志与复盘
   profile.py   投资画像（标签、AI 画像、数据页偏好）
   catalog.py   画像标签、数据指标、关注点规则的目录

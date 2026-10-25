@@ -73,8 +73,9 @@ async function viewUsers() {
   return `
     ${table(["用户", "角色", "持仓", "提问", "近 30 天成本", "累计成本", "注册", "最近访问", "操作"], rows.map((u) => `
       <tr class="${u.banned ? "dim" : ""}">
-        <td><b>${esc(u.username)}</b> <span class="muted small">#${u.id}</span>${u.banned ? ' <span class="badge bear">已停用</span>' : ""}</td>
-        <td>${u.role === "admin" ? `<span class="badge bull">管理员</span>${u.pinned_admin ? ' <span class="muted small" title="在 .env 的 ADMIN_USERNAMES 中">固定</span>' : ""}` : '<span class="muted">用户</span>'}</td>
+        <td><b>${esc(u.name)}</b> <span class="muted small">#${u.id}</span>${u.banned ? ' <span class="badge bear">已停用</span>' : ""}
+          <div class="muted small">${u.login_email ? esc(u.login_email) : "未绑定邮箱，登不进来"}</div></td>
+        <td>${u.role === "admin" || u.pinned_admin ? `<span class="badge bull">管理员</span>${u.pinned_admin ? ' <span class="muted small" title="在 .env 的 ADMIN_EMAILS 中">固定</span>' : ""}` : '<span class="muted">用户</span>'}</td>
         <td class="num">${u.companies}</td>
         <td class="num">${u.questions}</td>
         <td class="num">${yuan(u.cost_30d)}</td>
@@ -83,11 +84,10 @@ async function viewUsers() {
         <td class="num small">${esc(u.last_seen_at || "")}${u.paused ? '<br><span class="badge neutral" title="长期未访问，已暂停每日检索；再次访问时自动回溯">已暂停检索</span>' : ""}</td>
         <td class="actions">
           <button class="small" data-act="role" data-id="${u.id}" data-role="${u.role === "admin" ? "user" : "admin"}">${u.role === "admin" ? "取消管理员" : "设为管理员"}</button>
-          <button class="small" data-act="reset" data-id="${u.id}" data-name="${esc(u.username)}">重置密码</button>
-          <button class="small ${u.banned ? "" : "danger"}" data-act="ban" data-id="${u.id}" data-banned="${u.banned ? 0 : 1}" data-name="${esc(u.username)}">${u.banned ? "恢复" : "停用"}</button>
+          <button class="small ${u.banned ? "" : "danger"}" data-act="ban" data-id="${u.id}" data-banned="${u.banned ? 0 : 1}" data-name="${esc(u.name)}">${u.banned ? "恢复" : "停用"}</button>
         </td>
       </tr>`))}
-    <p class="muted small">停用会立即踢下线，数据保留；重置密码会生成一个临时密码，请私下发给对方。</p>`;
+    <p class="muted small">停用会立即踢下线，数据保留。老账号要先在服务器上运行 <code>python -m app.bind_email &lt;用户ID&gt; &lt;邮箱&gt;</code> 绑定登录邮箱。</p>`;
 }
 
 const userActions = {
@@ -97,11 +97,6 @@ const userActions = {
     if (banning && !confirm(`停用「${b.dataset.name}」？对方会被立即踢下线。`)) return false;
     await api(`/api/admin/users/${b.dataset.id}/ban`, { json: { banned: banning } });
     flash(banning ? "已停用" : "已恢复");
-  },
-  async reset(b) {
-    if (!confirm(`重置「${b.dataset.name}」的密码？对方当前的登录会失效。`)) return false;
-    const r = await api(`/api/admin/users/${b.dataset.id}/reset-password`, { method: "POST" });
-    prompt(`「${b.dataset.name}」的临时密码（只显示这一次，请复制后私下发给对方）：`, r.password);
   },
 };
 
@@ -119,7 +114,7 @@ async function viewJobs() {
     </div>
     ${table(["#", "类型", "用户", "公司数", "状态", "新增信息", "开始", "用时", "错误"], d.jobs.map((j) => `
       <tr>
-        <td class="num">${j.id}</td><td>${esc(j.label)}</td><td>${esc(j.username || "全站")}</td>
+        <td class="num">${j.id}</td><td>${esc(j.label)}</td><td>${esc(j.user_name || "全站")}</td>
         <td class="num">${j.company_count}</td>
         <td><span class="badge ${j.status === "failed" ? "bear" : j.status === "running" ? "neutral" : "bull"}">${STATUS[j.status] || j.status}</span>${j.status === "running" ? ` <span class="small muted">${esc(j.progress)}</span>` : ""}</td>
         <td class="num">${j.items_added}</td>

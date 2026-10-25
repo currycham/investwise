@@ -13,8 +13,8 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
 from . import admin, analyzer, digest, llm, notify, parser, portfolio, profile, thinking
-from .auth import current_user, hash_pw, login_session, user_from_session, verify_pw
-from .config import ADMIN_USERNAMES, BASE_DIR, DAILY_RUN_TIME, INVITE_CODE, TIMEZONE
+from .auth import current_user, display_name, is_admin, login_session, send_code, user_from_session, verify_code
+from .config import BASE_DIR, DAILY_RUN_TIME, INVITE_CODE, TIMEZONE
 from .db import alert_condition, get_conn, init_db, needs_judgment, thesis_text
 from .prompts import SOCRATIC_SYSTEM
 
@@ -42,10 +42,14 @@ app.include_router(portfolio.router)
 
 # ---------- 认证 ----------
 
-class Credentials(BaseModel):
-    username: str = Field(min_length=2, max_length=32)
-    password: str = Field(min_length=6, max_length=128)
-    invite_code: str = ""
+class CodeIn(BaseModel):
+    email: str = Field(min_length=3, max_length=200)
+    invite_code: str = Field(default="", max_length=64)
+
+
+class VerifyIn(BaseModel):
+    email: str = Field(min_length=3, max_length=200)
+    code: str = Field(min_length=1, max_length=10)
 
 
 @app.get("/api/public-config")
@@ -53,29 +57,16 @@ def public_config():
     return {"invite_required": bool(INVITE_CODE)}
 
 
-@app.post("/api/register")
-def register(body: Credentials, response: Response):
-    if INVITE_CODE and body.invite_code.strip() != INVITE_CODE:
-        raise HTTPException(403, "邀请码错误")
-    with get_conn() as conn:
-        if conn.execute("SELECT 1 FROM users WHERE username = ?", (body.username,)).fetchone():
-            raise HTTPException(409, "用户名已存在")
-        role = "admin" if body.username in ADMIN_USERNAMES else "user"
-        cur = conn.execute("INSERT INTO users (username, pw_hash, role) VALUES (?, ?, ?)",
-                           (body.username, hash_pw(body.password), role))
-    login_session(response, cur.lastrowid)
+@app.post("/api/login/code")
+def login_code(body: CodeIn):
+    """发验证码；没注册过的邮箱在这一步检查邀请码。"""
+    send_code(body.email, body.invite_code)
     return {"ok": True}
 
 
-@app.post("/api/login")
-def login(body: Credentials, response: Response):
-    with get_conn() as conn:
-        row = conn.execute("SELECT * FROM users WHERE username = ?", (body.username,)).fetchone()
-    if not row or not verify_pw(body.password, row["pw_hash"]):
-        raise HTTPException(401, "用户名或密码错误")
-    if row["banned"]:
-        raise HTTPException(403, "账号已停用，请联系管理员")
-    login_session(response, row["id"])
+@app.post("/api/login/verify")
+def login_verify(body: VerifyIn, response: Response):
+    login_session(response, verify_code(body.email, body.code))
     return {"ok": True}
 
 
@@ -90,12 +81,14 @@ def logout(response: Response, session: str | None = Cookie(default=None)):
 
 @app.get("/api/me")
 def me(user: dict = Depends(current_user)):
-    return {"username": user["username"], "alert_threshold": user["alert_threshold"], "is_admin": user["role"] == "admin",
-            "email": user["email"], "email_alerts": bool(user["email_alerts"]), "email_enabled": notify.enabled(),
+    return {"name": display_name(user), "nickname": user["username"], "login_email": user["login_email"],
+            "alert_threshold": user["alert_threshold"], "is_admin": is_admin(user), "email": user["email"],
+            "email_alerts": bool(user["email_alerts"]), "email_enabled": notify.enabled(),
             "judge_first": user["judge_first_at"] is not None}
 
 
 class Settings(BaseModel):
+    nickname: str = Field(default="", max_length=32)
     alert_threshold: int = Field(ge=1, le=10)
     email: str = Field(default="", max_length=200, pattern=EMAIL_RE)
     email_alerts: bool = True
@@ -106,9 +99,10 @@ class Settings(BaseModel):
 def update_settings(body: Settings, user: dict = Depends(current_user)):
     with get_conn() as conn:
         conn.execute(
-            "UPDATE users SET alert_threshold = ?, email = ?, email_alerts = ?,"
+            "UPDATE users SET username = ?, alert_threshold = ?, email = ?, email_alerts = ?,"
             " judge_first_at = CASE WHEN ? THEN COALESCE(judge_first_at, CURRENT_TIMESTAMP) END WHERE id = ?",
-            (body.alert_threshold, body.email.strip(), int(body.email_alerts), int(body.judge_first), user["id"]))
+            (body.nickname.strip(), body.alert_threshold, body.email.strip(), int(body.email_alerts),
+             int(body.judge_first), user["id"]))
     return {"ok": True}
 
 
@@ -445,6 +439,6 @@ def favicon():
 @app.get("/admin")
 def admin_page(session: str | None = Cookie(default=None)):
     user = user_from_session(session)
-    if not user or user["role"] != "admin":
+    if not user or not is_admin(user):
         return PlainTextResponse("Not Found", status_code=404)
     return HTMLResponse(_page("admin.html"), headers=NO_CACHE)

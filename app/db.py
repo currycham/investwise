@@ -6,10 +6,18 @@ from .config import DB_PATH, DEFAULT_ALERT_THRESHOLD
 SCHEMA = f"""
 CREATE TABLE IF NOT EXISTS users (
     id INTEGER PRIMARY KEY,
-    username TEXT UNIQUE NOT NULL,
-    pw_hash TEXT NOT NULL,
+    username TEXT NOT NULL DEFAULT '',  -- 昵称（以前是登录用的用户名）
+    pw_hash TEXT NOT NULL DEFAULT '',   -- 以前的密码登录，已不用
     alert_threshold INTEGER NOT NULL DEFAULT {DEFAULT_ALERT_THRESHOLD},
     created_at TEXT DEFAULT CURRENT_TIMESTAMP
+);
+-- 邮箱验证码：每个邮箱只留最新一条，只存哈希
+CREATE TABLE IF NOT EXISTS login_codes (
+    email TEXT PRIMARY KEY,
+    code_hash TEXT NOT NULL,
+    expires_at TEXT NOT NULL,
+    tries INTEGER NOT NULL DEFAULT 0,
+    sent_at TEXT NOT NULL
 );
 CREATE TABLE IF NOT EXISTS sessions (
     token TEXT PRIMARY KEY,
@@ -258,6 +266,7 @@ MIGRATIONS = [
     ("users", "last_seen_at", "TEXT"),
     ("users", "email", "TEXT NOT NULL DEFAULT ''"),
     ("users", "email_alerts", "INTEGER NOT NULL DEFAULT 1"),
+    ("users", "login_email", "TEXT"),  # 验证过的登录邮箱（小写），唯一索引见 init_db
     ("report_items", "notified_at", "TEXT"),  # 预警邮件已发送时间
     # 结构化投资逻辑：thesis 为"为什么买"，另加关键假设、证伪条件、计划持有期
     ("companies", "assumptions", "TEXT NOT NULL DEFAULT ''"),
@@ -284,17 +293,40 @@ MIGRATIONS = [
 
 
 def init_db() -> None:
-    from .config import ADMIN_USERNAMES
-
     with get_conn() as conn:
         conn.executescript(SCHEMA)
         for table, col, ddl in MIGRATIONS:
             cols = {r["name"] for r in conn.execute(f"PRAGMA table_info({table})")}
             if col not in cols:
                 conn.execute(f"ALTER TABLE {table} ADD COLUMN {col} {ddl}")
-        if ADMIN_USERNAMES:
-            conn.execute(f"UPDATE users SET role = 'admin' WHERE username IN ({','.join('?' * len(ADMIN_USERNAMES))})",
-                         ADMIN_USERNAMES)
+    _relax_username()
+    with get_conn() as conn:
+        conn.execute("CREATE UNIQUE INDEX IF NOT EXISTS idx_users_login_email ON users (login_email)")
+
+
+OLD_USER_COLS = ("username TEXT UNIQUE NOT NULL", "pw_hash TEXT NOT NULL,")
+NEW_USER_COLS = ("username TEXT NOT NULL DEFAULT ''", "pw_hash TEXT NOT NULL DEFAULT '',")
+
+
+def _relax_username() -> None:
+    """改成邮箱登录后，用户名只是昵称：去掉唯一、允许空。SQLite 改不了列约束，按官方步骤重建 users 表，
+    列和数据原样保留（关掉外键检查，其他表对 users 的引用不受影响）。"""
+    conn = _connect()
+    try:
+        sql = conn.execute("SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'users'").fetchone()[0]
+        if OLD_USER_COLS[0] not in sql:
+            return
+        for old, new in zip(OLD_USER_COLS, NEW_USER_COLS):
+            sql = sql.replace(old, new)
+        sql = sql.replace("CREATE TABLE users", "CREATE TABLE users_new", 1)
+        conn.execute("PRAGMA foreign_keys = OFF")
+        conn.executescript(f"BEGIN; {sql}; INSERT INTO users_new SELECT * FROM users; DROP TABLE users;"
+                           " ALTER TABLE users_new RENAME TO users; COMMIT;")
+        bad = conn.execute("PRAGMA foreign_key_check").fetchall()
+        if bad:
+            raise RuntimeError(f"重建 users 表后外键检查失败：{bad[:5]}")
+    finally:
+        conn.close()
 
 
 def alert_condition(threshold_sql: str = "u.alert_threshold") -> str:

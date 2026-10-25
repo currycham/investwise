@@ -1,6 +1,5 @@
 """后台管理接口：仅管理员可用（非管理员一律 404）。"""
 import json
-import secrets
 import threading
 import time
 from datetime import datetime, timedelta
@@ -11,8 +10,8 @@ from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 
 from . import analyzer, costs, digest
-from .auth import admin_user, hash_pw
-from .config import (ADMIN_USERNAMES, BACKFILL_DAYS, BOCHA_API_KEY, BOCHA_MODE, DAILY_BUDGET_YUAN, DEEPSEEK_API_KEY,
+from .auth import admin_user, display_name
+from .config import (ADMIN_EMAILS, BACKFILL_DAYS, BOCHA_API_KEY, BOCHA_MODE, DAILY_BUDGET_YUAN, DEEPSEEK_API_KEY,
                      INACTIVE_DAYS, TIMEZONE)
 from .db import get_conn
 
@@ -125,7 +124,7 @@ def users():
     month = _utc_days_ago(29)
     with get_conn() as conn:
         rows = [dict(r) for r in conn.execute(
-            """SELECT u.id, u.username, u.role, u.banned, u.alert_threshold, u.created_at, u.last_login_at,
+            """SELECT u.id, u.username, u.login_email, u.role, u.banned, u.alert_threshold, u.created_at, u.last_login_at,
                  COALESCE(u.last_seen_at, u.last_login_at, u.created_at) AS last_seen_at,
                  COALESCE(u.last_seen_at, u.last_login_at, u.created_at) < datetime('now', ?) AS paused,
                  (SELECT COUNT(*) FROM companies c WHERE c.user_id = u.id) AS companies,
@@ -137,7 +136,8 @@ def users():
     for r in rows:
         r["created_at"], r["last_login_at"] = _local(r["created_at"]), _local(r["last_login_at"])
         r["last_seen_at"] = _local(r["last_seen_at"])
-        r["pinned_admin"] = r["username"] in ADMIN_USERNAMES
+        r["name"] = display_name(r)
+        r["pinned_admin"] = (r["login_email"] or "") in ADMIN_EMAILS
     return rows
 
 
@@ -162,8 +162,8 @@ def _target(conn, user_id: int, admin: dict) -> dict:
 def set_role(user_id: int, body: RoleIn, admin: dict = Depends(admin_user)):
     with get_conn() as conn:
         u = _target(conn, user_id, admin)
-        if body.role != "admin" and u["username"] in ADMIN_USERNAMES:
-            raise HTTPException(400, "该用户在 .env 的 ADMIN_USERNAMES 里，需先从配置中移除")
+        if body.role != "admin" and (u["login_email"] or "") in ADMIN_EMAILS:
+            raise HTTPException(400, "该用户在 .env 的 ADMIN_EMAILS 里，需先从配置中移除")
         conn.execute("UPDATE users SET role = ? WHERE id = ?", ("admin" if body.role == "admin" else "user", user_id))
     return {"ok": True}
 
@@ -178,25 +178,17 @@ def set_banned(user_id: int, body: BanIn, admin: dict = Depends(admin_user)):
     return {"ok": True}
 
 
-@router.post("/users/{user_id}/reset-password")
-def reset_password(user_id: int, admin: dict = Depends(admin_user)):
-    """生成临时密码并让该用户所有登录失效；临时密码只在这次返回中出现。"""
-    password = secrets.token_urlsafe(6)
-    with get_conn() as conn:
-        _target(conn, user_id, admin)
-        conn.execute("UPDATE users SET pw_hash = ? WHERE id = ?", (hash_pw(password), user_id))
-        conn.execute("DELETE FROM sessions WHERE user_id = ?", (user_id,))
-    return {"password": password}
-
-
 # ---------- 任务 ----------
 
 @router.get("/jobs")
 def jobs():
     with get_conn() as conn:
         rows = [dict(r) for r in conn.execute(
-            "SELECT j.*, u.username FROM jobs j LEFT JOIN users u ON u.id = j.user_id ORDER BY j.id DESC LIMIT 100")]
+            "SELECT j.*, u.username, u.login_email FROM jobs j LEFT JOIN users u ON u.id = j.user_id"
+            " ORDER BY j.id DESC LIMIT 100")]
     for r in rows:
+        r["user_name"] = display_name({"id": r["user_id"], "username": r.pop("username"),
+                                       "login_email": r.pop("login_email")}) if r["user_id"] else ""
         r["errors"] = json.loads(r.pop("errors_json") or "[]")
         if r["finished_at"]:
             secs = (datetime.fromisoformat(r["finished_at"]) - datetime.fromisoformat(r["started_at"])).total_seconds()

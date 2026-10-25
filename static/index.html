@@ -25,13 +25,18 @@
       <p class="muted">我们不承诺让你多赚多少钱，只希望每一条新闻、每一次买卖，都成为你投资认知的一次练习。</p>
     </div>
     <div class="auth-card" id="auth-card">
-      <h2 id="auth-title">登录</h2>
-      <input id="auth-user" placeholder="用户名" autocomplete="username">
-      <input id="auth-pass" type="password" placeholder="密码（至少6位）" autocomplete="current-password">
-      <input id="auth-invite" class="hidden" placeholder="邀请码">
-      <button id="auth-submit" class="primary">登录</button>
-      <a href="#" id="auth-toggle" class="muted small">没有账号？注册（需要邀请码）</a>
+      <h2>登录 / 注册</h2>
+      <p class="muted small">用邮箱收验证码登录，不需要密码。第一次登录就是注册。</p>
+      <input id="auth-email" type="email" placeholder="邮箱" autocomplete="email">
+      <input id="auth-invite" class="hidden" placeholder="邀请码（新用户需要，老用户不用填）">
+      <button id="auth-send">获取验证码</button>
+      <div id="auth-step2" class="auth-step hidden">
+        <p class="muted small">验证码已发到 <b id="auth-to"></b>，10 分钟内有效。没收到的话看看垃圾邮件。</p>
+        <input id="auth-code" inputmode="numeric" maxlength="6" placeholder="6 位验证码" autocomplete="one-time-code">
+        <button id="auth-submit" class="primary">登录</button>
+      </div>
       <p id="auth-error" class="error"></p>
+      <p class="muted small">以前用用户名登录的，请联系管理员绑定邮箱，绑定后用邮箱登录，原来的数据都在。</p>
     </div>
   </div>
   <div class="guide-slot"></div>
@@ -289,6 +294,11 @@
 <!-- 设置 -->
 <dialog id="dlg-settings">
   <h3>设置</h3>
+  <label>昵称
+    <input id="nick" maxlength="32">
+  </label>
+  <p class="muted small">登录邮箱：<span id="login-email"></span>。昵称不填时显示邮箱 @ 前面的部分。</p>
+  <h3>预警</h3>
   <label>预警阈值：|评分| ≥ <b id="th-val"></b>
     <input id="th-range" type="range" min="1" max="10" step="1">
   </label>
@@ -297,7 +307,7 @@
   <label class="check"><input id="jf-on" type="checkbox"> 新信息先隐藏 AI 的判断，我先给出自己的判断</label>
   <p class="muted small">开启后，新入库的信息只显示事实和来源。你选择利好、利空或中性之后，再揭晓 AI 的评分和推理。「我的思考」里会统计你和 AI 的判断差异，帮你发现自己的盲点。</p>
   <h3>邮件预警</h3>
-  <label>邮箱
+  <label>提醒邮箱（默认是登录邮箱，可以改成别的）
     <input id="em-addr" type="email" placeholder="you@example.com" autocomplete="email">
   </label>
   <label class="check"><input id="em-on" type="checkbox"> 有新的预警、暴跌或新财报时发邮件给我</label>

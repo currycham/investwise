@@ -59,7 +59,8 @@ dialog h3 + label, dialog p + h3 { margin-top: 14px; }
   width: 100%; max-width: 360px; background: var(--card); padding: 32px; border-radius: 12px;
   display: flex; flex-direction: column; gap: 12px; border: 1px solid var(--border);
 }
-.auth-card h1 { margin: 0; }
+.auth-card h1, .auth-card h2, .auth-card p { margin: 0; }
+.auth-step { display: flex; flex-direction: column; gap: 12px; }
 
 /* 首页 */
 .landing { max-width: 1080px; margin: 0 auto; padding: 0 16px 48px; }
