@@ -1,7 +1,7 @@
 """行情与财务数据：日线价格、估值（PE/PB 及历史分位）、股息率、ROE、近十年年度财务、行业、汇率。
 
 全部来自免费数据源，按 (市场, 代码) 共享，每天更新一次：
-- A股：东方财富（日线、估值历史、财务指标、现金流量表、分红）
+- A股：东方财富（日线、估值历史、财务指标、现金流量表、分红）；日线取不到时用新浪、腾讯
 - 港股：东方财富（日线、财务指标、现金流量表、公司资料）、百度股市通（近十年 PE/PB）
 - 美股：东方财富（日线、财务指标、现金流量表）、Finnhub（PE/PB/ROE 及季度历史、股息率、行业）
 每个数据项单独容错：某个接口失败只影响对应字段，不影响其他字段。
@@ -67,7 +67,7 @@ def percentile(history: list[float], current: float | None) -> float | None:
 
 
 def _a_exchange(ticker: str) -> str:
-    return "SH" if ticker.startswith(("6", "9")) and not ticker.startswith("92") else \
+    return "SH" if ticker.startswith(("5", "6", "9")) and not ticker.startswith("92") else \
         "BJ" if ticker.startswith(("4", "8", "92")) else "SZ"
 
 
@@ -111,10 +111,29 @@ def fx_rates() -> dict[str, float]:
 # ---------- 日线 ----------
 
 def _fetch_prices(market: str, ticker: str, stored_prefix: str) -> tuple[list[tuple], str]:
-    """返回 ([(日期, 收盘, 涨跌幅%)], 美股交易所前缀)。前复权：最新价是真实价格，历史价格可比。"""
+    """返回 ([(日期, 收盘, 涨跌幅%)], 美股交易所前缀)。前复权：最新价是真实价格，历史价格可比。
+    先用东方财富；它的日线接口常常断开云服务器的连接，取不到时换新浪、腾讯。"""
+    try:
+        rows, prefix = _prices_em(market, ticker, stored_prefix)
+        if rows:
+            return rows, prefix
+        err = None
+    except Exception as e:
+        err, prefix = e, stored_prefix
+    for fn in _PRICE_BACKUPS[market]:
+        try:
+            if rows := _with_change(fn(ticker)):
+                return rows, prefix
+        except Exception as e:
+            err = err or e
+    if err:
+        raise err
+    return [], prefix
+
+
+def _prices_em(market: str, ticker: str, stored_prefix: str) -> tuple[list[tuple], str]:
     ak = _ak()
-    start = (date.today() - timedelta(days=PRICE_DAYS)).strftime("%Y%m%d")
-    kw = dict(period="daily", start_date=start, end_date="20500101", adjust="qfq")
+    kw = dict(period="daily", start_date=_price_start(), end_date="20500101", adjust="qfq")
     prefix = stored_prefix
     if is_fund(market, ticker):
         df = ak.fund_etf_hist_em(symbol=ticker, **kw)
@@ -137,6 +156,45 @@ def _fetch_prices(market: str, ticker: str, stored_prefix: str) -> tuple[list[tu
             return [], prefix
     rows = [(_day(r["日期"]), _num(r["收盘"]), _num(r["涨跌幅"])) for r in df.to_dict("records")]
     return [r for r in rows if r[1]], prefix
+
+
+def _price_start() -> str:
+    return (date.today() - timedelta(days=PRICE_DAYS)).strftime("%Y%m%d")
+
+
+def _with_change(df) -> list[tuple]:
+    """备用数据源只有收盘价：截取近 PRICE_DAYS 天，自己算涨跌幅。"""
+    start = str(date.today() - timedelta(days=PRICE_DAYS))
+    pts = [(_day(r["date"]), _num(r["close"])) for r in df.to_dict("records")]
+    pts = [p for p in pts if p[1]]
+    rows = []
+    for i, (d, close) in enumerate(pts):
+        if d >= start:
+            rows.append((d, close, round((close / pts[i - 1][1] - 1) * 100, 2) if i else None))
+    return rows
+
+
+def _a_symbol(ticker: str) -> str:
+    return _a_exchange(ticker).lower() + ticker
+
+
+def _a_backup_sina(ticker: str):
+    ak = _ak()
+    if is_fund("A", ticker):  # 新浪的 ETF 日线不复权，分红除息当天会有小幅跳空
+        return ak.fund_etf_hist_sina(symbol=_a_symbol(ticker))
+    return ak.stock_zh_a_daily(symbol=_a_symbol(ticker), start_date=_price_start(), end_date="20500101", adjust="qfq")
+
+
+def _a_backup_tx(ticker: str):
+    return _ak().stock_zh_a_hist_tx(symbol=_a_symbol(ticker), start_date=_price_start(), end_date="20500101",
+                                    adjust="qfq")
+
+
+_PRICE_BACKUPS = {
+    "A": [_a_backup_tx, _a_backup_sina],
+    "HK": [lambda t: _ak().stock_hk_daily(symbol=t, adjust="qfq")],
+    "US": [lambda t: _ak().stock_us_daily(symbol=t, adjust="qfq")],
+}
 
 
 def _completed(market: str, rows: list[tuple]) -> list[tuple]:
@@ -426,6 +484,10 @@ def refresh_stock(market: str, ticker: str, fx: dict | None = None) -> list[dict
                              [(market, ticker, *r) for r in rows])
     elif not old:
         errors.append("没有取到日线")
+    else:  # 这次没取到：用上次存的日线，至少保留股价和依赖股价的指标
+        with get_conn() as conn:
+            rows = [tuple(r) for r in conn.execute("SELECT date, close, change_pct FROM stock_prices"
+                                                   " WHERE market = ? AND ticker = ? ORDER BY date", (market, ticker))]
 
     metrics = _price_metrics(rows)
     # 年度财务和行业变化慢：只在第一次、出了新报告或者超过一周时重新拉取
